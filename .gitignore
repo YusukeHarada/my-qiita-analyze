@@ -19,3 +19,6 @@ __pycache__/
 .claude/
 .idea/
 .vscode/
+
+# 開発用スクリプト
+seed_dummy.py
