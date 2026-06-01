@@ -20,9 +20,6 @@ __pycache__/
 .idea/
 .vscode/
 
-# 開発用スクリプト
-seed_dummy.py
-
 # テスト・カバレッジ
 .coverage
 *.egg-info/
