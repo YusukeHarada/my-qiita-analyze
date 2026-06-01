@@ -146,7 +146,7 @@ class TestGenerateHtml:
         assert "12,345" in self._call(total_pv=12345)
 
     def test_article_count_in_output(self):
-        assert "42" in self._call(article_count=42)
+        assert '<div class="value">42</div>' in self._call(article_count=42)
 
     def test_plotly_cdn_included(self):
         assert "cdn.plot.ly" in self._call()

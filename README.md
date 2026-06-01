@@ -28,7 +28,7 @@ cp .env.example .env
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install .
 ```
 
 ### 4. GitHub Actions の Secret を設定
@@ -62,20 +62,42 @@ python report.py --start 2024-01-01 --end 2025-12-31
 生成された `report/index.html` をブラウザで開くとレポートを閲覧できる。  
 グラフ右上のボタン（1ヶ月 / 3ヶ月 / 6ヶ月 / 1年 / 2年 / 全期間）やスライダーでブラウザ上からも期間を変更できる。
 
+## テスト
+
+```bash
+# テスト依存パッケージをインストール
+pip install ".[test]"
+
+# テスト実行
+python -m pytest
+
+# カバレッジ付き
+python -m pytest --cov=. --cov-report=term-missing
+```
+
+プッシュ・プルリクエスト時に GitHub Actions（`test.yml`）が自動実行される。
+
 ## ファイル構成
 
 ```
 my-qiita-analyze/
 ├── .github/
 │   └── workflows/
-│       └── collect.yml   # GitHub Actions ワークフロー
+│       ├── collect.yml   # 毎日データ収集・レポート生成
+│       └── test.yml      # プッシュ時テスト自動実行
 ├── data/
 │   └── qiita.db          # SQLite（スナップショット蓄積）
 ├── report/
 │   └── index.html        # 生成された HTML レポート
+├── tests/                # テストスイート
+│   ├── conftest.py
+│   ├── test_collect.py
+│   ├── test_report.py
+│   ├── test_seed_dummy.py
+│   └── test_integration.py
 ├── collect.py            # データ収集スクリプト
 ├── report.py             # レポート生成スクリプト
-├── requirements.txt
+├── pyproject.toml        # 依存管理・pytest 設定
 ├── .env.example
 └── .gitignore
 ```

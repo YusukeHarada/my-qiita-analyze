@@ -66,13 +66,14 @@ class TestInsertDummy:
 
     def test_dates_are_past(self, single_day_conn):
         from seed_dummy import load_latest, insert_dummy
+        real_date = "2026-05-31"
         articles = load_latest(single_day_conn)
         insert_dummy(single_day_conn, articles, days=5)
         rows = single_day_conn.execute(
-            "SELECT snapshot_date FROM snapshots WHERE snapshot_date != '2026-05-31'"
+            "SELECT snapshot_date FROM snapshots WHERE snapshot_date != ?", (real_date,)
         ).fetchall()
-        today = date.today().isoformat()
-        assert all(r[0] < today for r in rows)
+        # ダミー日付はリアルデータの日付より前であること（実行日に依存しない）
+        assert all(r[0] < real_date for r in rows)
 
     def test_ignore_duplicate(self, single_day_conn):
         from seed_dummy import load_latest, insert_dummy
