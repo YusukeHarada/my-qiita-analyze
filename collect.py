@@ -14,6 +14,8 @@ load_dotenv()
 QIITA_TOKEN = os.getenv("QIITA_TOKEN")
 API_BASE = "https://qiita.com/api/v2"
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "qiita.db")
+_PER_PAGE = 100
+_REQUEST_TIMEOUT = 30
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -45,15 +47,15 @@ def fetch_all_items() -> list[dict]:
         resp = requests.get(
             f"{API_BASE}/authenticated_user/items",
             headers=headers,
-            params={"page": page, "per_page": 100},
-            timeout=30,
+            params={"page": page, "per_page": _PER_PAGE},
+            timeout=_REQUEST_TIMEOUT,
         )
         resp.raise_for_status()
         batch = resp.json()
         if not batch:
             break
         items.extend(batch)
-        if len(batch) < 100:
+        if len(batch) < _PER_PAGE:
             break
         page += 1
 
@@ -61,7 +63,6 @@ def fetch_all_items() -> list[dict]:
 
 
 def save_snapshot(conn: sqlite3.Connection, items: list[dict], today: str) -> int:
-    saved = 0
     for item in items:
         conn.execute(
             """
@@ -80,9 +81,8 @@ def save_snapshot(conn: sqlite3.Connection, items: list[dict], today: str) -> in
                 item.get("stocks_count", 0),
             ),
         )
-        saved += 1
     conn.commit()
-    return saved
+    return len(items)
 
 
 def main() -> None:
