@@ -1,0 +1,38 @@
+name: Collect Qiita Stats
+
+on:
+  schedule:
+    - cron: '0 22 * * *'  # 毎日 JST 07:00（UTC 22:00）
+  workflow_dispatch:       # GitHub UIから手動実行も可能
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # DB・レポートをコミットするために必要
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Collect Qiita stats
+        run: python collect.py
+        env:
+          QIITA_TOKEN: ${{ secrets.QIITA_TOKEN }}
+
+      - name: Generate HTML report
+        run: python report.py
+
+      - name: Commit updated data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/qiita.db report/index.html
+          git diff --staged --quiet || git commit -m "chore: update Qiita stats $(date +%Y-%m-%d)"
+          git push
