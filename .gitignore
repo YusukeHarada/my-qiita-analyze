@@ -22,3 +22,8 @@ __pycache__/
 
 # 開発用スクリプト
 seed_dummy.py
+
+# テスト・カバレッジ
+.coverage
+*.egg-info/
+.pytest_cache/
