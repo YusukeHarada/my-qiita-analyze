@@ -1,4 +1,21 @@
+# 環境変数（APIトークン）
 .env
+
+# Python
 .venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+
+# ログ
+*.log
+
+# macOS
+.DS_Store
+
+# エディタ
+.claude/
+.idea/
+.vscode/
