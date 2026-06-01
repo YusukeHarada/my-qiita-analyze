@@ -17,9 +17,15 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "data", "qiita.db")
-REPORT_DIR = os.path.join(os.path.dirname(__file__), "report")
+REPORT_DIR = os.path.join(os.path.dirname(__file__), "docs")
 REPORT_PATH = os.path.join(REPORT_DIR, "index.html")
 TOP_N = 10
+CHART_COLORS = [
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
+]
+TITLE_MAX_LEN = 30
+_NO_HISTORY_MSG = "<p style='color:#888;padding:16px 0'>時系列グラフはデータが2日分以上蓄積されると表示されます。</p>"
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,22 +143,17 @@ def build_per_article_chart(df: pd.DataFrame, latest: pd.DataFrame, start_date: 
     top_titles = latest.set_index("id")["title"].to_dict()
 
     fig = go.Figure()
-    colors = [
-        "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-        "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-    ]
-
     for i, article_id in enumerate(top_ids):
         article_df = df[df["id"] == article_id].sort_values("snapshot_date")
         full_title = top_titles.get(article_id, article_id)
-        short_title = (full_title[:30] + "…") if len(full_title) > 30 else full_title
+        short_title = (full_title[:TITLE_MAX_LEN] + "…") if len(full_title) > TITLE_MAX_LEN else full_title
 
         fig.add_trace(go.Scatter(
             x=article_df["snapshot_date"],
             y=article_df["page_views"],
             mode="lines+markers",
             name=short_title,
-            line=dict(color=colors[i % len(colors)], width=2),
+            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
             marker=dict(size=5),
             hovertemplate=f"{full_title}<br>%{{x}}<br>PV: %{{y:,}}<extra></extra>",
         ))
@@ -269,11 +270,9 @@ def main() -> None:
     article_count = len(latest_in_range)
     has_history = df_filtered["snapshot_date"].nunique() > 1
 
-    no_history_msg = "<p style='color:#888;padding:16px 0'>時系列グラフはデータが2日分以上蓄積されると表示されます。</p>"
-
     ranking_table = build_ranking_table(latest_in_range)
-    total_chart = build_total_pv_chart(df_filtered, start_date, end_date) if has_history else no_history_msg
-    per_article_chart = build_per_article_chart(df_filtered, latest_in_range, start_date, end_date) if has_history else no_history_msg
+    total_chart = build_total_pv_chart(df_filtered, start_date, end_date) if has_history else _NO_HISTORY_MSG
+    per_article_chart = build_per_article_chart(df_filtered, latest_in_range, start_date, end_date) if has_history else _NO_HISTORY_MSG
 
     html = generate_html(
         ranking_table,
