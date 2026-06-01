@@ -59,7 +59,9 @@ def resolve_date_range(df: pd.DataFrame, start: str | None, end: str | None) -> 
 
 
 def build_ranking_table(latest: pd.DataFrame) -> str:
-    ranked = latest.sort_values("page_views", ascending=False).reset_index(drop=True)
+    ranked = latest.copy()
+    ranked[["page_views", "likes", "stocks"]] = ranked[["page_views", "likes", "stocks"]].fillna(0)
+    ranked = ranked.sort_values("page_views", ascending=False).reset_index(drop=True)
     ranked.index += 1
 
     rows = ""
