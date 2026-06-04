@@ -53,6 +53,7 @@ class TestCollectToReport:
             len(latest),
             start_date,
             end_date,
+            report.build_chart_data_json(df),
         )
 
         report_path.write_text(html, encoding="utf-8")
