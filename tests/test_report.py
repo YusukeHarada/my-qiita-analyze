@@ -45,7 +45,7 @@ class TestBuildRankingTable:
         html = build_ranking_table(sample_latest_df)
         assert "<table>" in html
         assert "<thead>" in html
-        assert "<tbody>" in html
+        assert 'id="ranking-tbody"' in html
 
     def test_sorted_by_page_views_desc(self, sample_latest_df):
         from report import build_ranking_table
@@ -70,7 +70,7 @@ class TestBuildRankingTable:
     def test_rank_starts_at_1(self, sample_latest_df):
         from report import build_ranking_table
         html = build_ranking_table(sample_latest_df)
-        tbody_start = html.index("<tbody>")
+        tbody_start = html.index('<tbody id="ranking-tbody">')
         first_td = html.index("<td>", tbody_start)
         first_td_end = html.index("</td>", first_td)
         assert html[first_td + len("<td>"):first_td_end] == "1"
@@ -123,6 +123,37 @@ class TestBuildPerArticleChart:
         assert "\\u2026" in html or "…" in html
 
 
+class TestBuildChartDataJson:
+    def test_returns_json_string(self, sample_df):
+        from report import build_chart_data_json
+        result = build_chart_data_json(sample_df)
+        import json
+        data = json.loads(result)
+        assert isinstance(data, list)
+        assert len(data) > 0
+
+    def test_contains_required_columns(self, sample_df):
+        from report import build_chart_data_json
+        import json
+        data = json.loads(build_chart_data_json(sample_df))
+        for col in ["id", "title", "url", "created_at", "snapshot_date", "page_views", "likes", "stocks"]:
+            assert col in data[0]
+
+    def test_null_numeric_values_filled_with_zero(self):
+        from report import build_chart_data_json
+        import json
+        import numpy as np
+        df = pd.DataFrame([{
+            "id": "art001", "title": "記事A", "url": "https://q.com/a",
+            "created_at": "2024-01-01", "snapshot_date": "2026-06-01",
+            "page_views": None, "likes": np.nan, "stocks": None,
+        }])
+        data = json.loads(build_chart_data_json(df))
+        assert data[0]["page_views"] == 0
+        assert data[0]["likes"] == 0
+        assert data[0]["stocks"] == 0
+
+
 class TestGenerateHtml:
     def _call(self, **kwargs):
         from report import generate_html
@@ -135,6 +166,7 @@ class TestGenerateHtml:
             article_count=42,
             start_date="2024-06-01",
             end_date="2026-06-01",
+            chart_data_json="[]",
         )
         defaults.update(kwargs)
         return generate_html(**defaults)
@@ -146,10 +178,22 @@ class TestGenerateHtml:
         assert "12,345" in self._call(total_pv=12345)
 
     def test_article_count_in_output(self):
-        assert '<div class="value">42</div>' in self._call(article_count=42)
+        assert 'id="stat-article-count"' in self._call()
+        assert ">42<" in self._call(article_count=42)
 
     def test_plotly_cdn_included(self):
         assert "cdn.plot.ly" in self._call()
+
+    def test_filter_ui_elements_present(self):
+        html = self._call()
+        assert 'id="articleStart"' in html
+        assert 'id="articleEnd"' in html
+        assert 'id="clearFilter"' in html
+
+    def test_chart_data_embedded(self):
+        html = self._call(chart_data_json='[{"id":"art001"}]')
+        assert 'ALL_DATA' in html
+        assert '"id":"art001"' in html or 'id":"art001"' in html
 
 
 class TestLoadData:

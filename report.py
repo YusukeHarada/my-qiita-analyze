@@ -8,6 +8,7 @@ SQLiteに蓄積したスナップショットを読み込み、HTMLレポート�
 """
 
 import argparse
+import json
 import os
 import sqlite3
 from datetime import date, timedelta
@@ -25,7 +26,6 @@ CHART_COLORS = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 TITLE_MAX_LEN = 30
-_NO_HISTORY_MSG = "<p style='color:#888;padding:16px 0'>時系列グラフはデータが2日分以上蓄積されると表示されます。</p>"
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,7 +86,7 @@ def build_ranking_table(latest: pd.DataFrame) -> str:
           <th>PV数</th><th>いいね</th><th>ストック</th>
         </tr>
       </thead>
-      <tbody>{rows}</tbody>
+      <tbody id="ranking-tbody">{rows}</tbody>
     </table>
     """
 
@@ -133,7 +133,7 @@ def build_total_pv_chart(df: pd.DataFrame, start_date: str, end_date: str) -> st
         template="plotly_white",
         height=450,
     )
-    return pio.to_html(fig, full_html=False, include_plotlyjs=False)
+    return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id="total-pv-chart")
 
 
 def build_per_article_chart(df: pd.DataFrame, latest: pd.DataFrame, start_date: str, end_date: str) -> str:
@@ -169,7 +169,15 @@ def build_per_article_chart(df: pd.DataFrame, latest: pd.DataFrame, start_date: 
         height=550,
         legend=dict(orientation="v", x=1.02, y=1),
     )
-    return pio.to_html(fig, full_html=False, include_plotlyjs=False)
+    return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id="per-article-chart")
+
+
+def build_chart_data_json(df: pd.DataFrame) -> str:
+    cols = ["id", "title", "url", "created_at", "snapshot_date", "page_views", "likes", "stocks"]
+    data = df[cols].copy()
+    for col in ["page_views", "likes", "stocks"]:
+        data[col] = pd.to_numeric(data[col], errors="coerce").fillna(0).astype(int)
+    return data.to_json(orient="records", force_ascii=False)
 
 
 def generate_html(
@@ -181,8 +189,160 @@ def generate_html(
     article_count: int,
     start_date: str,
     end_date: str,
+    chart_data_json: str,
 ) -> str:
     plotly_cdn = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
+    data_script = (
+        f'<script>\n'
+        f'const ALL_DATA = {chart_data_json};\n'
+        f'const CHART_COLORS = {json.dumps(CHART_COLORS)};\n'
+        f'const TOP_N = {TOP_N};\n'
+        f'const TITLE_MAX_LEN = {TITLE_MAX_LEN};\n'
+        f'</script>'
+    )
+    filter_script = """<script>
+(function () {
+  var rsBtns = [
+    {count: 1,  label: "1ヶ月", step: "month", stepmode: "backward"},
+    {count: 3,  label: "3ヶ月", step: "month", stepmode: "backward"},
+    {count: 6,  label: "6ヶ月", step: "month", stepmode: "backward"},
+    {count: 1,  label: "1年",   step: "year",  stepmode: "backward"},
+    {count: 2,  label: "2年",   step: "year",  stepmode: "backward"},
+    {step: "all", label: "全期間"}
+  ];
+
+  function makeXaxis(dates) {
+    return {
+      type: "date",
+      range: dates.length ? [dates[0], dates[dates.length - 1]] : undefined,
+      rangeselector: {buttons: rsBtns, bgcolor: "#f0f0f0", activecolor: "#55C500"},
+      rangeslider: {visible: true, thickness: 0.05}
+    };
+  }
+
+  function filtered() {
+    var start = document.getElementById("articleStart").value;
+    var end   = document.getElementById("articleEnd").value;
+    return ALL_DATA.filter(function (r) {
+      return (!start || r.created_at >= start) && (!end || r.created_at <= end);
+    });
+  }
+
+  function latestDate(data) {
+    return data.reduce(function (m, r) { return r.snapshot_date > m ? r.snapshot_date : m; }, "");
+  }
+
+  function updateTotalPvChart(data) {
+    var dateMap = {};
+    data.forEach(function (r) {
+      dateMap[r.snapshot_date] = (dateMap[r.snapshot_date] || 0) + (r.page_views || 0);
+    });
+    var dates = Object.keys(dateMap).sort();
+    var trace = {
+      x: dates,
+      y: dates.map(function (d) { return dateMap[d]; }),
+      mode: "lines+markers",
+      name: "合計PV",
+      line: {color: "#55C500", width: 2},
+      marker: {size: 6},
+      hovertemplate: "%{x}<br>合計PV: %{y:,}<extra></extra>"
+    };
+    Plotly.react("total-pv-chart", [trace], {
+      title: "全記事の合計PV推移",
+      xaxis: makeXaxis(dates),
+      yaxis: {title: {text: "累計PV数"}},
+      hovermode: "x unified",
+      template: "plotly_white",
+      height: 450
+    });
+  }
+
+  function updatePerArticleChart(data) {
+    var ld = latestDate(data);
+    var latest = data.filter(function (r) { return r.snapshot_date === ld; });
+    latest.sort(function (a, b) { return (b.page_views || 0) - (a.page_views || 0); });
+    var topIds = latest.slice(0, TOP_N).map(function (r) { return r.id; });
+
+    var byId = {};
+    data.forEach(function (r) {
+      if (!byId[r.id]) { byId[r.id] = {title: r.title, rows: []}; }
+      byId[r.id].rows.push(r);
+    });
+
+    var allDates = [];
+    data.forEach(function (r) { if (allDates.indexOf(r.snapshot_date) < 0) { allDates.push(r.snapshot_date); } });
+    allDates.sort();
+
+    var traces = topIds.map(function (id, i) {
+      var entry = byId[id] || {title: id, rows: []};
+      var rows = entry.rows.slice().sort(function (a, b) { return a.snapshot_date < b.snapshot_date ? -1 : 1; });
+      var full = entry.title;
+      var short = full.length > TITLE_MAX_LEN ? full.slice(0, TITLE_MAX_LEN) + "…" : full;
+      return {
+        x: rows.map(function (r) { return r.snapshot_date; }),
+        y: rows.map(function (r) { return r.page_views; }),
+        mode: "lines+markers",
+        name: short,
+        line: {color: CHART_COLORS[i % CHART_COLORS.length], width: 2},
+        marker: {size: 5},
+        hovertemplate: full + "<br>%{x}<br>PV: %{y:,}<extra></extra>"
+      };
+    });
+
+    Plotly.react("per-article-chart", traces, {
+      title: "上位" + TOP_N + "記事のPV推移",
+      xaxis: makeXaxis(allDates),
+      yaxis: {title: {text: "累計PV数"}},
+      hovermode: "x unified",
+      template: "plotly_white",
+      height: 550,
+      legend: {orientation: "v", x: 1.02, y: 1}
+    });
+  }
+
+  function updateStats(data) {
+    var ld = latestDate(data);
+    var latest = data.filter(function (r) { return r.snapshot_date === ld; });
+    var ids = {};
+    latest.forEach(function (r) { ids[r.id] = true; });
+    var totalPv = latest.reduce(function (s, r) { return s + (r.page_views || 0); }, 0);
+    document.getElementById("stat-article-count").textContent = Object.keys(ids).length;
+    document.getElementById("stat-total-pv").textContent = totalPv.toLocaleString("ja-JP");
+  }
+
+  function updateRankingTable(data) {
+    var ld = latestDate(data);
+    var latest = data.filter(function (r) { return r.snapshot_date === ld; });
+    latest.sort(function (a, b) { return (b.page_views || 0) - (a.page_views || 0); });
+    document.getElementById("ranking-tbody").innerHTML = latest.map(function (r, i) {
+      return "<tr>" +
+        "<td>" + (i + 1) + "</td>" +
+        "<td class='title'><a href='" + r.url + "' target='_blank'>" + r.title + "</a></td>" +
+        "<td>" + r.created_at + "</td>" +
+        "<td class='num'>" + (r.page_views || 0).toLocaleString("ja-JP") + "</td>" +
+        "<td class='num'>" + (r.likes || 0).toLocaleString("ja-JP") + "</td>" +
+        "<td class='num'>" + (r.stocks || 0).toLocaleString("ja-JP") + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  function applyFilter() {
+    var data = filtered();
+    updateTotalPvChart(data);
+    updatePerArticleChart(data);
+    updateStats(data);
+    updateRankingTable(data);
+  }
+
+  document.getElementById("articleStart").addEventListener("change", applyFilter);
+  document.getElementById("articleEnd").addEventListener("change", applyFilter);
+  document.getElementById("clearFilter").addEventListener("click", function () {
+    document.getElementById("articleStart").value = "";
+    document.getElementById("articleEnd").value = "";
+    applyFilter();
+  });
+}());
+</script>"""
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -212,6 +372,11 @@ def generate_html(
     td.title a {{ color: #0066cc; text-decoration: none; word-break: break-word; }}
     td.title a:hover {{ text-decoration: underline; }}
     td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+    .date-filter {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
+    .date-filter label {{ display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: #555; }}
+    .date-filter input[type="date"] {{ padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }}
+    .date-filter button {{ padding: 6px 14px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }}
+    .date-filter button:hover {{ background: #e0e0e0; }}
   </style>
 </head>
 <body>
@@ -222,11 +387,21 @@ def generate_html(
     <div class="stats">
       <div class="stat-card">
         <div class="label">総記事数</div>
-        <div class="value">{article_count}</div>
+        <div class="value" id="stat-article-count">{article_count}</div>
       </div>
       <div class="stat-card">
         <div class="label">総PV数</div>
-        <div class="value">{total_pv:,}</div>
+        <div class="value" id="stat-total-pv">{total_pv:,}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>発行日フィルター</h2>
+      <div class="date-filter">
+        <label>発行日：<input type="date" id="articleStart"></label>
+        〜
+        <label><input type="date" id="articleEnd"></label>
+        <button id="clearFilter">クリア</button>
       </div>
     </div>
 
@@ -243,6 +418,8 @@ def generate_html(
       {per_article_chart}
     </div>
   </div>
+  {data_script}
+  {filter_script}
 </body>
 </html>"""
 
@@ -270,11 +447,11 @@ def main() -> None:
 
     total_pv = int(latest_in_range["page_views"].sum())
     article_count = len(latest_in_range)
-    has_history = df_filtered["snapshot_date"].nunique() > 1
 
     ranking_table = build_ranking_table(latest_in_range)
-    total_chart = build_total_pv_chart(df_filtered, start_date, end_date) if has_history else _NO_HISTORY_MSG
-    per_article_chart = build_per_article_chart(df_filtered, latest_in_range, start_date, end_date) if has_history else _NO_HISTORY_MSG
+    total_chart = build_total_pv_chart(df_filtered, start_date, end_date)
+    per_article_chart = build_per_article_chart(df_filtered, latest_in_range, start_date, end_date)
+    chart_data_json = build_chart_data_json(df_filtered)
 
     html = generate_html(
         ranking_table,
@@ -285,6 +462,7 @@ def main() -> None:
         article_count,
         start_date,
         end_date,
+        chart_data_json,
     )
 
     os.makedirs(REPORT_DIR, exist_ok=True)
