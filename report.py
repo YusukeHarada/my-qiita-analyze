@@ -334,12 +334,32 @@ def generate_html(
     updateRankingTable(data);
   }
 
-  document.getElementById("articleStart").addEventListener("change", applyFilter);
-  document.getElementById("articleEnd").addEventListener("change", applyFilter);
+  document.getElementById("articleStart").addEventListener("change", function () {
+    document.querySelectorAll(".quick-filter-btn").forEach(function (b) { b.classList.remove("active"); });
+    applyFilter();
+  });
+  document.getElementById("articleEnd").addEventListener("change", function () {
+    document.querySelectorAll(".quick-filter-btn").forEach(function (b) { b.classList.remove("active"); });
+    applyFilter();
+  });
   document.getElementById("clearFilter").addEventListener("click", function () {
     document.getElementById("articleStart").value = "";
     document.getElementById("articleEnd").value = "";
+    document.querySelectorAll(".quick-filter-btn").forEach(function (b) { b.classList.remove("active"); });
     applyFilter();
+  });
+  document.querySelectorAll(".quick-filter-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var months = parseInt(btn.getAttribute("data-months"), 10);
+      var today = new Date();
+      var start = new Date(today);
+      start.setMonth(start.getMonth() - months);
+      document.getElementById("articleStart").value = start.toISOString().slice(0, 10);
+      document.getElementById("articleEnd").value = today.toISOString().slice(0, 10);
+      document.querySelectorAll(".quick-filter-btn").forEach(function (b) { b.classList.remove("active"); });
+      btn.classList.add("active");
+      applyFilter();
+    });
   });
 }());
 </script>"""
@@ -377,6 +397,10 @@ def generate_html(
     .date-filter input[type="date"] {{ padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }}
     .date-filter button {{ padding: 6px 14px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }}
     .date-filter button:hover {{ background: #e0e0e0; }}
+    .quick-filters {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }}
+    .quick-filter-btn {{ padding: 6px 14px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }}
+    .quick-filter-btn:hover {{ background: #e0e0e0; }}
+    .quick-filter-btn.active {{ background: #55C500; color: #fff; border-color: #55C500; }}
   </style>
 </head>
 <body>
@@ -397,6 +421,12 @@ def generate_html(
 
     <div class="card">
       <h2>発行日フィルター</h2>
+      <div class="quick-filters">
+        <button class="quick-filter-btn" data-months="1">1ヶ月以内</button>
+        <button class="quick-filter-btn" data-months="3">3ヶ月以内</button>
+        <button class="quick-filter-btn" data-months="6">半年以内</button>
+        <button class="quick-filter-btn" data-months="12">1年以内</button>
+      </div>
       <div class="date-filter">
         <label>発行日：<input type="date" id="articleStart"></label>
         〜
