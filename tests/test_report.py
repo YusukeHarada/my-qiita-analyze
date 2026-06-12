@@ -190,6 +190,17 @@ class TestGenerateHtml:
         assert 'id="articleEnd"' in html
         assert 'id="clearFilter"' in html
 
+    def test_quick_filter_buttons_present(self):
+        html = self._call()
+        assert 'data-months="1"' in html
+        assert 'data-months="3"' in html
+        assert 'data-months="6"' in html
+        assert 'data-months="12"' in html
+        assert '1ヶ月以内' in html
+        assert '3ヶ月以内' in html
+        assert '半年以内' in html
+        assert '1年以内' in html
+
     def test_chart_data_embedded(self):
         html = self._call(chart_data_json='[{"id":"art001"}]')
         assert 'ALL_DATA' in html
