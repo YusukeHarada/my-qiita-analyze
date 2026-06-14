@@ -297,10 +297,9 @@ def generate_html(
       yaxis: {title: {text: "累計PV数"}},
       hovermode: "x unified",
       template: "plotly_white",
-      height: isMobile ? 360 : 550,
-      legend: isMobile
-        ? {orientation: "h", y: -0.35, x: 0, xanchor: "left"}
-        : {orientation: "v", x: 1.02, y: 1}
+      height: isMobile ? 380 : 550,
+      showlegend: !isMobile,
+      legend: {orientation: "v", x: 1.02, y: 1}
     });
   }
 
