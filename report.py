@@ -247,13 +247,14 @@ def generate_html(
       marker: {size: 6},
       hovertemplate: "%{x}<br>合計PV: %{y:,}<extra></extra>"
     };
+    var isMobile = window.innerWidth <= 768;
     Plotly.react("total-pv-chart", [trace], {
       title: "全記事の合計PV推移",
       xaxis: makeXaxis(dates),
       yaxis: {title: {text: "累計PV数"}},
       hovermode: "x unified",
       template: "plotly_white",
-      height: 450
+      height: isMobile ? 300 : 450
     });
   }
 
@@ -289,14 +290,17 @@ def generate_html(
       };
     });
 
+    var isMobile = window.innerWidth <= 768;
     Plotly.react("per-article-chart", traces, {
       title: "上位" + TOP_N + "記事のPV推移",
       xaxis: makeXaxis(allDates),
       yaxis: {title: {text: "累計PV数"}},
       hovermode: "x unified",
       template: "plotly_white",
-      height: 550,
-      legend: {orientation: "v", x: 1.02, y: 1}
+      height: isMobile ? 360 : 550,
+      legend: isMobile
+        ? {orientation: "h", y: -0.35, x: 0, xanchor: "left"}
+        : {orientation: "v", x: 1.02, y: 1}
     });
   }
 
@@ -361,6 +365,14 @@ def generate_html(
       applyFilter();
     });
   });
+
+  applyFilter();
+
+  var resizeTimer;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(applyFilter, 200);
+  });
 }());
 </script>"""
 
@@ -401,6 +413,29 @@ def generate_html(
     .quick-filter-btn {{ padding: 6px 14px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }}
     .quick-filter-btn:hover {{ background: #e0e0e0; }}
     .quick-filter-btn.active {{ background: #55C500; color: #fff; border-color: #55C500; }}
+    .table-wrapper {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
+    @media (max-width: 768px) {{
+      .container {{ padding: 12px; }}
+      h1 {{ font-size: 1.4rem; }}
+      .meta {{ line-height: 1.7; }}
+      .meta-note {{ display: block; margin-top: 2px; }}
+      .stats {{ gap: 10px; margin-bottom: 20px; }}
+      .stat-card {{ padding: 14px 18px; flex: 1; min-width: 130px; }}
+      .stat-card .value {{ font-size: 1.6rem; }}
+      .card {{ padding: 16px; margin-bottom: 16px; }}
+      h2 {{ font-size: 1.05rem; margin-bottom: 12px; }}
+      table {{ font-size: 0.8rem; }}
+      th, td {{ padding: 8px 6px; }}
+      td.title {{ max-width: 180px; }}
+      .date-filter {{ flex-direction: column; align-items: flex-start; gap: 8px; }}
+      .date-filter input[type="date"] {{ width: 160px; }}
+    }}
+    @media (max-width: 480px) {{
+      .container {{ padding: 8px; }}
+      h1 {{ font-size: 1.2rem; }}
+      .stat-card .value {{ font-size: 1.3rem; }}
+      .quick-filter-btn, .date-filter button {{ padding: 8px 10px; }}
+    }}
   </style>
 </head>
 <body>
@@ -437,7 +472,9 @@ def generate_html(
 
     <div class="card">
       <h2>PVランキング</h2>
-      {ranking_table}
+      <div class="table-wrapper">
+        {ranking_table}
+      </div>
     </div>
 
     <div class="card">
