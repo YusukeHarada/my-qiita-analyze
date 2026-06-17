@@ -144,20 +144,28 @@ def build_per_article_chart(df: pd.DataFrame, latest: pd.DataFrame, start_date: 
     )
     top_titles = latest.set_index("id")["title"].to_dict()
 
+    def _fmt_diff(v):
+        if pd.isna(v):
+            return "−"
+        v = int(v)
+        return f"+{v:,}" if v >= 0 else f"{v:,}"
+
     fig = go.Figure()
     for i, article_id in enumerate(top_ids):
         article_df = df[df["id"] == article_id].sort_values("snapshot_date")
         full_title = top_titles.get(article_id, article_id)
         short_title = (full_title[:TITLE_MAX_LEN] + "…") if len(full_title) > TITLE_MAX_LEN else full_title
+        diffs = article_df["page_views"].diff().map(_fmt_diff).tolist()
 
         fig.add_trace(go.Scatter(
             x=article_df["snapshot_date"],
             y=article_df["page_views"],
+            customdata=diffs,
             mode="lines+markers",
             name=short_title,
             line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
             marker=dict(size=5),
-            hovertemplate=f"{full_title}<br>%{{x}}<br>PV: %{{y:,}}<extra></extra>",
+            hovertemplate=f"{full_title}<br>%{{x}}<br>PV: %{{y:,}}<br>前日比: %{{customdata}}<extra></extra>",
         ))
 
     fig.update_layout(
@@ -279,14 +287,21 @@ def generate_html(
       var rows = entry.rows.slice().sort(function (a, b) { return a.snapshot_date < b.snapshot_date ? -1 : 1; });
       var full = entry.title;
       var short = full.length > TITLE_MAX_LEN ? full.slice(0, TITLE_MAX_LEN) + "…" : full;
+      var pvs = rows.map(function (r) { return r.page_views; });
+      var customdata = pvs.map(function (pv, idx) {
+        if (idx === 0) return "−";
+        var diff = pv - pvs[idx - 1];
+        return (diff >= 0 ? "+" : "") + diff.toLocaleString("ja-JP");
+      });
       return {
         x: rows.map(function (r) { return r.snapshot_date; }),
-        y: rows.map(function (r) { return r.page_views; }),
+        y: pvs,
+        customdata: customdata,
         mode: "lines+markers",
         name: short,
         line: {color: CHART_COLORS[i % CHART_COLORS.length], width: 2},
         marker: {size: 5},
-        hovertemplate: full + "<br>%{x}<br>PV: %{y:,}<extra></extra>"
+        hovertemplate: full + "<br>%{x}<br>PV: %{y:,}<br>前日比: %{customdata}<extra></extra>"
       };
     });
 
