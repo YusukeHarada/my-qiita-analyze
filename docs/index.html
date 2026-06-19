@@ -226,8 +226,10 @@ const TITLE_MAX_LEN = 30;
       xaxis: makeXaxis(allDates),
       yaxis: {title: {text: "累計PV数"}},
       hovermode: "x unified",
+      hoverlabel: {namelength: -1},
       template: "plotly_white",
       height: isMobile ? 380 : 550,
+      margin: {t: 80, r: isMobile ? 20 : 160},
       showlegend: !isMobile,
       legend: {orientation: "v", x: 1.02, y: 1}
     });
