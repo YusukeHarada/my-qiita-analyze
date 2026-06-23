@@ -172,9 +172,10 @@ def build_per_article_chart(df: pd.DataFrame, latest: pd.DataFrame, start_date: 
         title=f"上位{TOP_N}記事のPV推移",
         xaxis=_range_selector_xaxis(start_date, end_date),
         yaxis_title="累計PV数",
-        hovermode="x unified",
+        hovermode="closest",
         template="plotly_white",
         height=550,
+        margin=dict(t=60, r=160),
         legend=dict(orientation="v", x=1.02, y=1),
     )
     return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id="per-article-chart")
@@ -310,9 +311,11 @@ def generate_html(
       title: "上位" + TOP_N + "記事のPV推移",
       xaxis: makeXaxis(allDates),
       yaxis: {title: {text: "累計PV数"}},
-      hovermode: "x unified",
+      hovermode: "closest",
+      hoverlabel: {namelength: -1},
       template: "plotly_white",
       height: isMobile ? 380 : 550,
+      margin: {t: 60, r: isMobile ? 20 : 160},
       showlegend: !isMobile,
       legend: {orientation: "v", x: 1.02, y: 1}
     });
