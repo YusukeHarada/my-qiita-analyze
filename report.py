@@ -198,13 +198,55 @@ def explode_tags(df: pd.DataFrame) -> pd.DataFrame:
     return exploded[cols].reset_index(drop=True)
 
 
-def top_frequent_tags(long_df: pd.DataFrame, n: int = TOP_N) -> list[str]:
-    if long_df.empty:
+def _compute_group_change_rates(daily_df: pd.DataFrame, groups: list[str], window_days: int) -> list[dict]:
+    results = []
+    for group in groups:
+        group_df = daily_df[daily_df["group"] == group].sort_values("snapshot_date")
+        if group_df.empty:
+            continue
+
+        latest_date_str = group_df["snapshot_date"].max()
+        latest_pv = int(group_df.loc[group_df["snapshot_date"] == latest_date_str, "page_views"].iloc[0])
+
+        target_date = (date.fromisoformat(latest_date_str) - timedelta(days=window_days)).isoformat()
+        prev_candidates = group_df[group_df["snapshot_date"] <= target_date]
+        prev_pv = int(prev_candidates.iloc[-1]["page_views"]) if not prev_candidates.empty else None
+
+        if prev_pv is None:
+            rate_value, rate_display, pv_increase = float("-inf"), "データ不足", float("-inf")
+        else:
+            pv_increase = latest_pv - prev_pv
+            if prev_pv == 0:
+                rate_value = float("inf") if latest_pv > 0 else 0.0
+                rate_display = "新規" if latest_pv > 0 else "0.0%"
+            else:
+                rate_value = pv_increase / prev_pv * 100
+                rate_display = f"{'+' if rate_value >= 0 else ''}{rate_value:.1f}%"
+
+        results.append(dict(
+            group=group, latest_pv=latest_pv, prev_pv=prev_pv,
+            rate_value=rate_value, rate_display=rate_display,
+            pv_increase=pv_increase,
+        ))
+    return results
+
+
+def select_top_groups_by_change_rate(
+    daily_df: pd.DataFrame,
+    window_days: int = TAG_CHANGE_RATE_WINDOW_DAYS,
+    n: int = TOP_N,
+) -> list[str]:
+    if daily_df.empty:
         return []
-    latest_date = long_df["snapshot_date"].max()
-    latest = long_df[long_df["snapshot_date"] == latest_date]
-    counts = latest.groupby("group")["id"].nunique().sort_values(ascending=False)
-    return counts.head(n).index.tolist()
+    all_groups = daily_df["group"].unique().tolist()
+    results = _compute_group_change_rates(daily_df, all_groups, window_days)
+    # 前期間のデータが無いグループ（データ不足）は増加数を比較できないため除外
+    eligible = [r for r in results if r["prev_pv"] is not None]
+    # 変化率(%)ではなく直近PVの絶対増加数でランキングする。
+    # PV数の少ないタグが小さな母数からの急成長（例: 1PV→2PVで+100%）でノイズとして
+    # 上位に来る問題を避けつつ、伸びている度合いとPVの規模の両方を反映できるため。
+    eligible.sort(key=lambda r: r["pv_increase"], reverse=True)
+    return [r["group"] for r in eligible[:n]]
 
 
 def explode_keywords(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
@@ -265,43 +307,23 @@ def build_group_change_rate_table(daily_df: pd.DataFrame, groups: list[str], win
     if daily_df.empty or not groups:
         return "<p>データがありません。</p>"
 
-    results = []
-    for group in groups:
-        group_df = daily_df[daily_df["group"] == group].sort_values("snapshot_date")
-        if group_df.empty:
-            continue
-
-        latest_date_str = group_df["snapshot_date"].max()
-        latest_pv = int(group_df.loc[group_df["snapshot_date"] == latest_date_str, "page_views"].iloc[0])
-
-        target_date = (date.fromisoformat(latest_date_str) - timedelta(days=window_days)).isoformat()
-        prev_candidates = group_df[group_df["snapshot_date"] <= target_date]
-        prev_pv = int(prev_candidates.iloc[-1]["page_views"]) if not prev_candidates.empty else None
-
-        if prev_pv is None:
-            rate_value, rate_display = float("-inf"), "データ不足"
-        elif prev_pv == 0:
-            rate_value = float("inf") if latest_pv > 0 else 0.0
-            rate_display = "新規" if latest_pv > 0 else "0.0%"
-        else:
-            rate_value = (latest_pv - prev_pv) / prev_pv * 100
-            rate_display = f"{'+' if rate_value >= 0 else ''}{rate_value:.1f}%"
-
-        results.append(dict(
-            group=group, latest_pv=latest_pv, prev_pv=prev_pv,
-            rate_value=rate_value, rate_display=rate_display,
-        ))
-
-    results.sort(key=lambda r: r["rate_value"], reverse=True)
+    results = _compute_group_change_rates(daily_df, groups, window_days)
+    # 選定基準（PVの絶対増加数）と表示順を一致させる
+    results.sort(key=lambda r: r["pv_increase"], reverse=True)
 
     rows = ""
     for r in results:
         prev_pv_display = f"{r['prev_pv']:,}" if r["prev_pv"] is not None else "−"
+        if r["prev_pv"] is None:
+            increase_display = "−"
+        else:
+            increase_display = f"{'+' if r['pv_increase'] >= 0 else ''}{r['pv_increase']:,}"
         rows += (
             f"<tr>"
             f"<td>{r['group']}</td>"
             f"<td class='num'>{r['latest_pv']:,}</td>"
             f"<td class='num'>{prev_pv_display}</td>"
+            f"<td class='num'>{increase_display}</td>"
             f"<td class='num'>{r['rate_display']}</td>"
             f"</tr>"
         )
@@ -310,7 +332,7 @@ def build_group_change_rate_table(daily_df: pd.DataFrame, groups: list[str], win
     <table>
       <thead>
         <tr>
-          <th>グループ</th><th>直近PV</th><th>{window_days}日前PV</th><th>変化率</th>
+          <th>グループ</th><th>直近PV</th><th>{window_days}日前PV</th><th>増減PV</th><th>変化率</th>
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -709,9 +731,9 @@ def main() -> None:
 
     tag_chart = tag_table = keyword_chart = keyword_table = None
     tag_long_df = explode_tags(df_filtered)
-    if not tag_long_df.empty:
-        tag_groups = top_frequent_tags(tag_long_df, TOP_N)
-        tag_daily = aggregate_group_daily_pv(tag_long_df)
+    tag_daily = aggregate_group_daily_pv(tag_long_df)
+    tag_groups = select_top_groups_by_change_rate(tag_daily, TAG_CHANGE_RATE_WINDOW_DAYS, TOP_N)
+    if tag_groups:
         tag_chart = build_group_pv_chart(
             tag_daily, tag_groups, start_date, end_date, "タグ別PV推移", "tag-pv-chart"
         )
