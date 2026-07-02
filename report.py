@@ -59,21 +59,35 @@ def resolve_date_range(df: pd.DataFrame, start: str | None, end: str | None) -> 
     return start_date, end_date
 
 
-def build_ranking_table(latest: pd.DataFrame) -> str:
+def build_ranking_table(
+    latest: pd.DataFrame, df_filtered: pd.DataFrame, window_days: int = TAG_CHANGE_RATE_WINDOW_DAYS
+) -> str:
     ranked = latest.copy()
     ranked[["page_views", "likes", "stocks"]] = ranked[["page_views", "likes", "stocks"]].fillna(0)
     ranked = ranked.sort_values("page_views", ascending=False).reset_index(drop=True)
     ranked.index += 1
 
+    article_daily = df_filtered[["id", "snapshot_date", "page_views"]].rename(columns={"id": "group"})
+    rates_by_id = {
+        r["group"]: r
+        for r in _compute_group_change_rates(article_daily, ranked["id"].tolist(), window_days)
+    }
+
     rows = ""
     for rank, row in ranked.iterrows():
         title_link = f'<a href="{row["url"]}" target="_blank">{row["title"]}</a>'
+        rate = rates_by_id.get(row["id"])
+        if rate is None or rate["prev_pv"] is None:
+            increase_display = "−"
+        else:
+            increase_display = f"{'+' if rate['pv_increase'] >= 0 else ''}{rate['pv_increase']:,}"
         rows += (
             f"<tr>"
             f"<td>{rank}</td>"
             f"<td class='title'>{title_link}</td>"
             f"<td>{row['created_at']}</td>"
             f"<td class='num'>{int(row['page_views']):,}</td>"
+            f"<td class='num'>{increase_display}</td>"
             f"<td class='num'>{int(row['likes']):,}</td>"
             f"<td class='num'>{int(row['stocks']):,}</td>"
             f"</tr>"
@@ -84,7 +98,7 @@ def build_ranking_table(latest: pd.DataFrame) -> str:
       <thead>
         <tr>
           <th>#</th><th>タイトル</th><th>投稿日</th>
-          <th>PV数</th><th>いいね</th><th>ストック</th>
+          <th>PV数</th><th>増減PV（{window_days}日）</th><th>いいね</th><th>ストック</th>
         </tr>
       </thead>
       <tbody id="ranking-tbody">{rows}</tbody>
@@ -398,6 +412,7 @@ def generate_html(
         f'const CHART_COLORS = {json.dumps(CHART_COLORS)};\n'
         f'const TOP_N = {TOP_N};\n'
         f'const TITLE_MAX_LEN = {TITLE_MAX_LEN};\n'
+        f'const PV_INCREASE_WINDOW_DAYS = {TAG_CHANGE_RATE_WINDOW_DAYS};\n'
         f'</script>'
     )
     filter_script = """<script>
@@ -522,6 +537,21 @@ def generate_html(
     document.getElementById("stat-total-pv").textContent = totalPv.toLocaleString("ja-JP");
   }
 
+  function pvIncreaseDisplay(data, id, latestDateStr) {
+    var rows = data.filter(function (r) { return r.id === id; })
+      .sort(function (a, b) { return a.snapshot_date < b.snapshot_date ? -1 : 1; });
+    var targetDate = new Date(latestDateStr + "T00:00:00Z");
+    targetDate.setUTCDate(targetDate.getUTCDate() - PV_INCREASE_WINDOW_DAYS);
+    var targetDateStr = targetDate.toISOString().slice(0, 10);
+    var priorRows = rows.filter(function (r) { return r.snapshot_date <= targetDateStr; });
+    if (priorRows.length === 0) { return "−"; }
+    var prevPv = priorRows[priorRows.length - 1].page_views || 0;
+    var latestRow = rows.filter(function (r) { return r.snapshot_date === latestDateStr; })[0];
+    var latestPv = latestRow ? (latestRow.page_views || 0) : 0;
+    var diff = latestPv - prevPv;
+    return (diff >= 0 ? "+" : "") + diff.toLocaleString("ja-JP");
+  }
+
   function updateRankingTable(data) {
     var ld = latestDate(data);
     var latest = data.filter(function (r) { return r.snapshot_date === ld; });
@@ -532,6 +562,7 @@ def generate_html(
         "<td class='title'><a href='" + r.url + "' target='_blank'>" + r.title + "</a></td>" +
         "<td>" + r.created_at + "</td>" +
         "<td class='num'>" + (r.page_views || 0).toLocaleString("ja-JP") + "</td>" +
+        "<td class='num'>" + pvIncreaseDisplay(data, r.id, ld) + "</td>" +
         "<td class='num'>" + (r.likes || 0).toLocaleString("ja-JP") + "</td>" +
         "<td class='num'>" + (r.stocks || 0).toLocaleString("ja-JP") + "</td>" +
         "</tr>";
@@ -724,7 +755,7 @@ def main() -> None:
     total_pv = int(latest_in_range["page_views"].sum())
     article_count = len(latest_in_range)
 
-    ranking_table = build_ranking_table(latest_in_range)
+    ranking_table = build_ranking_table(latest_in_range, df_filtered, TAG_CHANGE_RATE_WINDOW_DAYS)
     total_chart = build_total_pv_chart(df_filtered, start_date, end_date)
     per_article_chart = build_per_article_chart(df_filtered, latest_in_range, start_date, end_date)
     chart_data_json = build_chart_data_json(df_filtered)
