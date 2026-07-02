@@ -50,8 +50,8 @@ def insert_dummy(conn: sqlite3.Connection, articles: list[dict], days: int) -> i
             conn.execute(
                 """
                 INSERT OR IGNORE INTO snapshots
-                    (id, title, url, created_at, snapshot_date, page_views, likes, stocks)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, title, url, created_at, snapshot_date, page_views, likes, stocks, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     article["id"],
@@ -62,6 +62,7 @@ def insert_dummy(conn: sqlite3.Connection, articles: list[dict], days: int) -> i
                     pv,
                     likes,
                     stocks,
+                    article.get("tags"),
                 ),
             )
             inserted += conn.execute("SELECT changes()").fetchone()[0]

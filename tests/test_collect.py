@@ -24,6 +24,32 @@ class TestInitDb:
         pk_cols = {col[1] for col in cols if col[5] > 0}
         assert pk_cols == {"id", "snapshot_date"}
 
+    def test_adds_tags_column(self, mem_conn):
+        from collect import init_db
+        init_db(mem_conn)
+        cols = {row[1] for row in mem_conn.execute("PRAGMA table_info(snapshots)")}
+        assert "tags" in cols
+
+    def test_migrates_existing_table_without_tags_column(self, mem_conn):
+        from collect import init_db
+        mem_conn.execute("""
+            CREATE TABLE snapshots (
+                id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                page_views INTEGER,
+                likes INTEGER,
+                stocks INTEGER,
+                PRIMARY KEY (id, snapshot_date)
+            )
+        """)
+        mem_conn.commit()
+        init_db(mem_conn)
+        cols = {row[1] for row in mem_conn.execute("PRAGMA table_info(snapshots)")}
+        assert "tags" in cols
+
 
 class TestFetchAllItems:
     def test_single_page(self, requests_mock, qiita_token_env):
@@ -155,3 +181,49 @@ class TestSaveSnapshot:
         save_snapshot(mem_conn_with_schema, [item], "2026-06-01")
         row = mem_conn_with_schema.execute("SELECT likes FROM snapshots").fetchone()
         assert row[0] == 0
+
+    def test_tags_saved_as_comma_joined_string(self, mem_conn_with_schema):
+        from collect import save_snapshot
+        item = self._item(tags=[{"name": "Python"}, {"name": "Docker"}])
+        save_snapshot(mem_conn_with_schema, [item], "2026-06-01")
+        row = mem_conn_with_schema.execute("SELECT tags FROM snapshots").fetchone()
+        assert row[0] == "Python,Docker"
+
+    def test_tags_empty_when_absent(self, mem_conn_with_schema):
+        from collect import save_snapshot
+        save_snapshot(mem_conn_with_schema, [self._item()], "2026-06-01")
+        row = mem_conn_with_schema.execute("SELECT tags FROM snapshots").fetchone()
+        assert row[0] == ""
+
+    def test_tags_backfilled_to_past_snapshots_without_tags(self, mem_conn_with_schema):
+        from collect import save_snapshot
+        save_snapshot(mem_conn_with_schema, [self._item()], "2026-05-30")
+        save_snapshot(
+            mem_conn_with_schema,
+            [self._item(tags=[{"name": "Python"}])],
+            "2026-06-01",
+        )
+        rows = mem_conn_with_schema.execute(
+            "SELECT snapshot_date, tags FROM snapshots ORDER BY snapshot_date"
+        ).fetchall()
+        assert rows == [
+            ("2026-05-30", "Python"),
+            ("2026-06-01", "Python"),
+        ]
+
+    def test_tags_backfill_does_not_overwrite_existing_tags(self, mem_conn_with_schema):
+        from collect import save_snapshot
+        save_snapshot(
+            mem_conn_with_schema,
+            [self._item(tags=[{"name": "Ruby"}])],
+            "2026-05-30",
+        )
+        save_snapshot(
+            mem_conn_with_schema,
+            [self._item(tags=[{"name": "Python"}])],
+            "2026-06-01",
+        )
+        row = mem_conn_with_schema.execute(
+            "SELECT tags FROM snapshots WHERE snapshot_date = '2026-05-30'"
+        ).fetchone()
+        assert row[0] == "Ruby"

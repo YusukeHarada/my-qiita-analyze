@@ -31,6 +31,7 @@ def seeded_conn():
                 "page_views_count": 1000,
                 "likes_count": 10,
                 "stocks_count": 5,
+                "tags": [{"name": "Python"}, {"name": "Docker"}],
             },
             {
                 "id": "art002",
@@ -40,6 +41,7 @@ def seeded_conn():
                 "page_views_count": 500,
                 "likes_count": 5,
                 "stocks_count": 2,
+                "tags": [{"name": "Python"}],
             },
         ]
         save_snapshot(conn, articles, "2026-05-30")
@@ -79,6 +81,13 @@ def sample_df(sample_latest_df):
     day0["snapshot_date"] = "2026-05-30"
     day0["page_views"] = [900, 450]
     return pd.concat([day0, sample_latest_df], ignore_index=True)
+
+
+@pytest.fixture
+def sample_df_with_tags(sample_df):
+    df = sample_df.copy()
+    df["tags"] = df["id"].map({"art001": "Python,Docker", "art002": "Python"})
+    return df
 
 
 @pytest.fixture

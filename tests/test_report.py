@@ -207,6 +207,133 @@ class TestGenerateHtml:
         assert '"id":"art001"' in html or 'id":"art001"' in html
 
 
+class TestExplodeTags:
+    def test_splits_comma_separated_tags_into_rows(self, sample_df_with_tags):
+        from report import explode_tags
+        long_df = explode_tags(sample_df_with_tags)
+        art001_groups = set(long_df[long_df["id"] == "art001"]["group"])
+        assert art001_groups == {"Python", "Docker"}
+
+    def test_excludes_rows_without_tags(self, sample_df_with_tags):
+        from report import explode_tags
+        df = sample_df_with_tags.copy()
+        df.loc[df["id"] == "art002", "tags"] = None
+        long_df = explode_tags(df)
+        assert "art002" not in set(long_df["id"])
+
+    def test_missing_tags_column_returns_empty(self, sample_df):
+        from report import explode_tags
+        long_df = explode_tags(sample_df)
+        assert long_df.empty
+
+    def test_empty_df_returns_empty(self):
+        from report import explode_tags
+        import pandas as pd
+        assert explode_tags(pd.DataFrame()).empty
+
+
+class TestTopFrequentTags:
+    def test_returns_tags_sorted_by_article_count(self, sample_df_with_tags):
+        from report import explode_tags, top_frequent_tags
+        long_df = explode_tags(sample_df_with_tags)
+        top = top_frequent_tags(long_df, n=2)
+        # Python は art001・art002 の2記事、Docker は art001 のみの1記事
+        assert top[0] == "Python"
+        assert "Docker" in top
+
+    def test_limits_to_n(self, sample_df_with_tags):
+        from report import explode_tags, top_frequent_tags
+        long_df = explode_tags(sample_df_with_tags)
+        assert len(top_frequent_tags(long_df, n=1)) == 1
+
+    def test_empty_input_returns_empty_list(self):
+        from report import top_frequent_tags
+        import pandas as pd
+        assert top_frequent_tags(pd.DataFrame(columns=["group", "snapshot_date", "id"])) == []
+
+
+class TestExplodeKeywords:
+    def test_matches_title_case_insensitively(self, sample_df_with_tags):
+        from report import explode_keywords
+        df = sample_df_with_tags.copy()
+        df.loc[df["id"] == "art001", "title"] = "python入門"
+        long_df = explode_keywords(df, ["Python"])
+        assert "art001" in set(long_df[long_df["group"] == "Python"]["id"])
+
+    def test_no_match_excludes_group(self, sample_df_with_tags):
+        from report import explode_keywords
+        long_df = explode_keywords(sample_df_with_tags, ["Rust"])
+        assert long_df.empty
+
+    def test_empty_keywords_returns_empty(self, sample_df_with_tags):
+        from report import explode_keywords
+        assert explode_keywords(sample_df_with_tags, []).empty
+
+
+class TestAggregateGroupDailyPv:
+    def test_sums_page_views_per_group_and_date(self, sample_df_with_tags):
+        from report import explode_tags, aggregate_group_daily_pv
+        long_df = explode_tags(sample_df_with_tags)
+        daily = aggregate_group_daily_pv(long_df)
+        python_latest = daily[(daily["group"] == "Python") & (daily["snapshot_date"] == "2026-05-31")]
+        # art001(1000) + art002(500)
+        assert python_latest["page_views"].iloc[0] == 1500
+
+    def test_empty_input_returns_empty(self):
+        from report import aggregate_group_daily_pv
+        import pandas as pd
+        assert aggregate_group_daily_pv(pd.DataFrame(columns=["group", "snapshot_date", "page_views"])).empty
+
+
+class TestBuildGroupPvChart:
+    def test_returns_html_string(self, sample_df_with_tags):
+        from report import explode_tags, aggregate_group_daily_pv, build_group_pv_chart, top_frequent_tags
+        long_df = explode_tags(sample_df_with_tags)
+        daily = aggregate_group_daily_pv(long_df)
+        groups = top_frequent_tags(long_df)
+        html = build_group_pv_chart(daily, groups, "2026-05-30", "2026-05-31", "タグ別PV推移", "tag-pv-chart")
+        assert "<div" in html
+        assert 'id="tag-pv-chart"' in html
+
+
+class TestBuildGroupChangeRateTable:
+    def test_computes_percentage_change(self, sample_df_with_tags):
+        from report import explode_tags, aggregate_group_daily_pv, build_group_change_rate_table
+        long_df = explode_tags(sample_df_with_tags)
+        daily = aggregate_group_daily_pv(long_df)
+        # Python: 900+450=1350 -> 1000+500=1500, (1500-1350)/1350*100 = +11.1%
+        html = build_group_change_rate_table(daily, ["Python"], window_days=1)
+        assert "+11.1%" in html
+
+    def test_sorted_descending_by_rate(self):
+        from report import build_group_change_rate_table
+        import pandas as pd
+        daily = pd.DataFrame([
+            {"group": "A", "snapshot_date": "2026-05-30", "page_views": 100},
+            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 110},
+            {"group": "B", "snapshot_date": "2026-05-30", "page_views": 100},
+            {"group": "B", "snapshot_date": "2026-05-31", "page_views": 200},
+        ])
+        html = build_group_change_rate_table(daily, ["A", "B"], window_days=1)
+        assert html.index(">B<") < html.index(">A<")
+
+    def test_zero_previous_pv_shown_as_new(self):
+        from report import build_group_change_rate_table
+        import pandas as pd
+        daily = pd.DataFrame([
+            {"group": "A", "snapshot_date": "2026-05-30", "page_views": 0},
+            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 50},
+        ])
+        html = build_group_change_rate_table(daily, ["A"], window_days=1)
+        assert "新規" in html
+
+    def test_empty_groups_returns_placeholder(self):
+        from report import build_group_change_rate_table
+        import pandas as pd
+        html = build_group_change_rate_table(pd.DataFrame(), [])
+        assert "データがありません" in html
+
+
 class TestLoadData:
     def test_raises_file_not_found(self, monkeypatch, tmp_path):
         import report
