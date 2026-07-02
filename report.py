@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import sqlite3
+import statistics
 from datetime import date, timedelta
 
 import pandas as pd
@@ -67,11 +68,7 @@ def build_ranking_table(
     ranked = ranked.sort_values("page_views", ascending=False).reset_index(drop=True)
     ranked.index += 1
 
-    article_daily = df_filtered[["id", "snapshot_date", "page_views"]].rename(columns={"id": "group"})
-    rates_by_id = {
-        r["group"]: r
-        for r in _compute_group_change_rates(article_daily, ranked["id"].tolist(), window_days)
-    }
+    rates_by_id = _compute_article_change_rates(df_filtered, window_days)
 
     rows = ""
     for rank, row in ranked.iterrows():
@@ -245,22 +242,33 @@ def _compute_group_change_rates(daily_df: pd.DataFrame, groups: list[str], windo
     return results
 
 
-def select_top_groups_by_change_rate(
-    daily_df: pd.DataFrame,
-    window_days: int = TAG_CHANGE_RATE_WINDOW_DAYS,
-    n: int = TOP_N,
-) -> list[str]:
-    if daily_df.empty:
-        return []
-    all_groups = daily_df["group"].unique().tolist()
-    results = _compute_group_change_rates(daily_df, all_groups, window_days)
-    # 前期間のデータが無いグループ（データ不足）は増加数を比較できないため除外
-    eligible = [r for r in results if r["prev_pv"] is not None]
-    # 変化率(%)ではなく直近PVの絶対増加数でランキングする。
-    # PV数の少ないタグが小さな母数からの急成長（例: 1PV→2PVで+100%）でノイズとして
-    # 上位に来る問題を避けつつ、伸びている度合いとPVの規模の両方を反映できるため。
-    eligible.sort(key=lambda r: r["pv_increase"], reverse=True)
-    return [r["group"] for r in eligible[:n]]
+def _compute_article_change_rates(df_filtered: pd.DataFrame, window_days: int) -> dict[str, dict]:
+    article_daily = df_filtered[["id", "snapshot_date", "page_views"]].rename(columns={"id": "group"})
+    article_ids = df_filtered["id"].unique().tolist()
+    return {r["group"]: r for r in _compute_group_change_rates(article_daily, article_ids, window_days)}
+
+
+def median_pv_increase_by_group(long_df: pd.DataFrame, article_rates_by_id: dict[str, dict]) -> dict[str, float]:
+    if long_df.empty:
+        return {}
+    medians = {}
+    for group, ids in long_df.groupby("group")["id"].unique().items():
+        increases = [
+            article_rates_by_id[i]["pv_increase"]
+            for i in ids
+            if i in article_rates_by_id and article_rates_by_id[i]["prev_pv"] is not None
+        ]
+        if increases:
+            medians[group] = statistics.median(increases)
+    return medians
+
+
+def select_top_groups_by_median_pv_increase(group_medians: dict[str, float], n: int = TOP_N) -> list[str]:
+    # 記事数の多いタグが単に母数の多さで上位に来るのを避けるため、グループの合計増加数ではなく
+    # 「そのグループに属する各記事の増減PVの中央値」でランキングする。中央値は平均と違い、
+    # 1記事だけの突発的なバズ（外れ値）に引っ張られにくい。
+    ranked = sorted(group_medians.items(), key=lambda kv: kv[1], reverse=True)
+    return [group for group, _ in ranked[:n]]
 
 
 def explode_keywords(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
@@ -317,13 +325,20 @@ def build_group_pv_chart(
     return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id=div_id)
 
 
-def build_group_change_rate_table(daily_df: pd.DataFrame, groups: list[str], window_days: int = 7) -> str:
+def build_group_change_rate_table(
+    daily_df: pd.DataFrame, groups: list[str], window_days: int, group_medians: dict[str, float]
+) -> str:
     if daily_df.empty or not groups:
         return "<p>データがありません。</p>"
 
     results = _compute_group_change_rates(daily_df, groups, window_days)
-    # 選定基準（PVの絶対増加数）と表示順を一致させる
-    results.sort(key=lambda r: r["pv_increase"], reverse=True)
+    for r in results:
+        r["median_pv_increase"] = group_medians.get(r["group"])
+    # 選定基準（1記事あたり増減PVの中央値）と表示順を一致させる
+    results.sort(
+        key=lambda r: r["median_pv_increase"] if r["median_pv_increase"] is not None else float("-inf"),
+        reverse=True,
+    )
 
     rows = ""
     for r in results:
@@ -332,12 +347,15 @@ def build_group_change_rate_table(daily_df: pd.DataFrame, groups: list[str], win
             increase_display = "−"
         else:
             increase_display = f"{'+' if r['pv_increase'] >= 0 else ''}{r['pv_increase']:,}"
+        median = r["median_pv_increase"]
+        median_display = "−" if median is None else f"{'+' if median >= 0 else ''}{median:,.0f}"
         rows += (
             f"<tr>"
             f"<td>{r['group']}</td>"
             f"<td class='num'>{r['latest_pv']:,}</td>"
             f"<td class='num'>{prev_pv_display}</td>"
             f"<td class='num'>{increase_display}</td>"
+            f"<td class='num'>{median_display}</td>"
             f"<td class='num'>{r['rate_display']}</td>"
             f"</tr>"
         )
@@ -346,7 +364,8 @@ def build_group_change_rate_table(daily_df: pd.DataFrame, groups: list[str], win
     <table>
       <thead>
         <tr>
-          <th>グループ</th><th>直近PV</th><th>{window_days}日前PV</th><th>増減PV</th><th>変化率</th>
+          <th>グループ</th><th>直近PV</th><th>{window_days}日前PV</th><th>増減PV</th>
+          <th>1記事あたり増減PV（中央値）</th><th>変化率</th>
         </tr>
       </thead>
       <tbody>{rows}</tbody>
@@ -761,22 +780,28 @@ def main() -> None:
     chart_data_json = build_chart_data_json(df_filtered)
 
     tag_chart = tag_table = keyword_chart = keyword_table = None
+    article_rates_by_id = _compute_article_change_rates(df_filtered, TAG_CHANGE_RATE_WINDOW_DAYS)
+
     tag_long_df = explode_tags(df_filtered)
-    tag_daily = aggregate_group_daily_pv(tag_long_df)
-    tag_groups = select_top_groups_by_change_rate(tag_daily, TAG_CHANGE_RATE_WINDOW_DAYS, TOP_N)
+    tag_medians = median_pv_increase_by_group(tag_long_df, article_rates_by_id)
+    tag_groups = select_top_groups_by_median_pv_increase(tag_medians, TOP_N)
     if tag_groups:
+        tag_daily = aggregate_group_daily_pv(tag_long_df)
         tag_chart = build_group_pv_chart(
             tag_daily, tag_groups, start_date, end_date, "タグ別PV推移", "tag-pv-chart"
         )
-        tag_table = build_group_change_rate_table(tag_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS)
+        tag_table = build_group_change_rate_table(tag_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS, tag_medians)
 
         keyword_long_df = explode_keywords(df_filtered, tag_groups)
+        keyword_medians = median_pv_increase_by_group(keyword_long_df, article_rates_by_id)
         keyword_daily = aggregate_group_daily_pv(keyword_long_df)
         keyword_chart = build_group_pv_chart(
             keyword_daily, tag_groups, start_date, end_date,
             "キーワード別PV推移（タイトル内）", "keyword-pv-chart",
         )
-        keyword_table = build_group_change_rate_table(keyword_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS)
+        keyword_table = build_group_change_rate_table(
+            keyword_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS, keyword_medians
+        )
 
     html = generate_html(
         ranking_table,

@@ -249,58 +249,60 @@ class TestExplodeTags:
         assert explode_tags(pd.DataFrame()).empty
 
 
-class TestSelectTopGroupsByChangeRate:
-    def test_sorted_by_absolute_pv_increase_not_percentage(self):
-        from report import select_top_groups_by_change_rate
+class TestMedianPvIncreaseByGroup:
+    def test_computes_median_of_member_article_increases(self):
+        from report import median_pv_increase_by_group
         import pandas as pd
-        daily = pd.DataFrame([
-            # A: 10 -> 15 (+5, +50%)
-            {"group": "A", "snapshot_date": "2026-05-30", "page_views": 10},
-            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 15},
-            # B: 1000 -> 1100 (+100, +10%)
-            {"group": "B", "snapshot_date": "2026-05-30", "page_views": 1000},
-            {"group": "B", "snapshot_date": "2026-05-31", "page_views": 1100},
+        long_df = pd.DataFrame([
+            {"id": "art1", "group": "Python"},
+            {"id": "art2", "group": "Python"},
+            {"id": "art3", "group": "Python"},
         ])
-        groups = select_top_groups_by_change_rate(daily, window_days=1, n=2)
-        # Bの方が%は低いが絶対増加数(+100)がAの絶対増加数(+5)より大きいため上位に来る
-        assert groups == ["B", "A"]
+        article_rates_by_id = {
+            "art1": {"pv_increase": 10, "prev_pv": 100},
+            "art2": {"pv_increase": 20, "prev_pv": 100},
+            "art3": {"pv_increase": 900, "prev_pv": 100},  # 突発的な外れ値
+        }
+        medians = median_pv_increase_by_group(long_df, article_rates_by_id)
+        # 中央値なので外れ値(900)に引っ張られず20になる
+        assert medians["Python"] == 20
 
-    def test_excludes_groups_without_prior_baseline(self):
-        from report import select_top_groups_by_change_rate
+    def test_excludes_articles_without_baseline(self):
+        from report import median_pv_increase_by_group
         import pandas as pd
-        daily = pd.DataFrame([
-            {"group": "OnlyToday", "snapshot_date": "2026-05-31", "page_views": 1000},
-            {"group": "HasHistory", "snapshot_date": "2026-05-30", "page_views": 100},
-            {"group": "HasHistory", "snapshot_date": "2026-05-31", "page_views": 110},
+        long_df = pd.DataFrame([
+            {"id": "art1", "group": "Python"},
+            {"id": "art2", "group": "Python"},
         ])
-        groups = select_top_groups_by_change_rate(daily, window_days=1, n=5)
-        assert groups == ["HasHistory"]
+        article_rates_by_id = {
+            "art1": {"pv_increase": 30, "prev_pv": 100},
+            "art2": {"pv_increase": float("-inf"), "prev_pv": None},
+        }
+        medians = median_pv_increase_by_group(long_df, article_rates_by_id)
+        assert medians["Python"] == 30
 
-    def test_new_group_ranked_by_current_volume(self):
-        from report import select_top_groups_by_change_rate
+    def test_group_with_no_eligible_articles_excluded(self):
+        from report import median_pv_increase_by_group
         import pandas as pd
-        daily = pd.DataFrame([
-            # Steady: 100 -> 105 (+5)
-            {"group": "Steady", "snapshot_date": "2026-05-30", "page_views": 100},
-            {"group": "Steady", "snapshot_date": "2026-05-31", "page_views": 105},
-            # New: 0 -> 50 (+50、新規記事などで前期間PVが0だったケース)
-            {"group": "New", "snapshot_date": "2026-05-30", "page_views": 0},
-            {"group": "New", "snapshot_date": "2026-05-31", "page_views": 50},
-        ])
-        groups = select_top_groups_by_change_rate(daily, window_days=1, n=2)
-        assert groups[0] == "New"
+        long_df = pd.DataFrame([{"id": "art1", "group": "Python"}])
+        article_rates_by_id = {"art1": {"pv_increase": float("-inf"), "prev_pv": None}}
+        assert median_pv_increase_by_group(long_df, article_rates_by_id) == {}
 
-    def test_limits_to_n(self, sample_df_with_tags):
-        from report import explode_tags, aggregate_group_daily_pv, select_top_groups_by_change_rate
-        long_df = explode_tags(sample_df_with_tags)
-        daily = aggregate_group_daily_pv(long_df)
-        groups = select_top_groups_by_change_rate(daily, window_days=1, n=1)
-        assert len(groups) == 1
+    def test_empty_input_returns_empty_dict(self):
+        from report import median_pv_increase_by_group
+        import pandas as pd
+        assert median_pv_increase_by_group(pd.DataFrame(), {}) == {}
+
+
+class TestSelectTopGroupsByMedianPvIncrease:
+    def test_sorted_descending_and_limited_to_n(self):
+        from report import select_top_groups_by_median_pv_increase
+        medians = {"A": 50, "B": 100, "C": 10}
+        assert select_top_groups_by_median_pv_increase(medians, n=2) == ["B", "A"]
 
     def test_empty_input_returns_empty_list(self):
-        from report import select_top_groups_by_change_rate
-        import pandas as pd
-        assert select_top_groups_by_change_rate(pd.DataFrame(columns=["group", "snapshot_date", "page_views"])) == []
+        from report import select_top_groups_by_median_pv_increase
+        assert select_top_groups_by_median_pv_increase({}) == []
 
 
 class TestExplodeKeywords:
@@ -338,10 +340,10 @@ class TestAggregateGroupDailyPv:
 
 class TestBuildGroupPvChart:
     def test_returns_html_string(self, sample_df_with_tags):
-        from report import explode_tags, aggregate_group_daily_pv, build_group_pv_chart, select_top_groups_by_change_rate
+        from report import explode_tags, aggregate_group_daily_pv, build_group_pv_chart
         long_df = explode_tags(sample_df_with_tags)
         daily = aggregate_group_daily_pv(long_df)
-        groups = select_top_groups_by_change_rate(daily, window_days=1)
+        groups = daily["group"].unique().tolist()
         html = build_group_pv_chart(daily, groups, "2026-05-30", "2026-05-31", "タグ別PV推移", "tag-pv-chart")
         assert "<div" in html
         assert 'id="tag-pv-chart"' in html
@@ -353,31 +355,36 @@ class TestBuildGroupChangeRateTable:
         long_df = explode_tags(sample_df_with_tags)
         daily = aggregate_group_daily_pv(long_df)
         # Python: 900+450=1350 -> 1000+500=1500, (1500-1350)/1350*100 = +11.1%
-        html = build_group_change_rate_table(daily, ["Python"], window_days=1)
+        html = build_group_change_rate_table(daily, ["Python"], window_days=1, group_medians={"Python": 75})
         assert "+11.1%" in html
 
-    def test_shows_absolute_pv_increase_column(self, sample_df_with_tags):
+    def test_shows_absolute_and_median_pv_increase_columns(self, sample_df_with_tags):
         from report import explode_tags, aggregate_group_daily_pv, build_group_change_rate_table
         long_df = explode_tags(sample_df_with_tags)
         daily = aggregate_group_daily_pv(long_df)
-        html = build_group_change_rate_table(daily, ["Python"], window_days=1)
+        # Python合計: (1000+500) - (900+450) = +150、中央値(art001:+100, art002:+50)は+75
+        html = build_group_change_rate_table(daily, ["Python"], window_days=1, group_medians={"Python": 75})
         assert "増減PV" in html
         assert "+150" in html
+        assert "+75" in html
 
-    def test_sorted_descending_by_absolute_pv_increase_not_rate(self):
+    def test_sorted_descending_by_group_medians_not_total_increase(self):
         from report import build_group_change_rate_table
         import pandas as pd
         daily = pd.DataFrame([
-            # A: 10 -> 15 (+5, +50%)
+            # A: 10 -> 15 (合計増加+5)
             {"group": "A", "snapshot_date": "2026-05-30", "page_views": 10},
             {"group": "A", "snapshot_date": "2026-05-31", "page_views": 15},
-            # B: 1000 -> 1100 (+100, +10%)
+            # B: 1000 -> 1100 (合計増加+100)
             {"group": "B", "snapshot_date": "2026-05-30", "page_views": 1000},
             {"group": "B", "snapshot_date": "2026-05-31", "page_views": 1100},
         ])
-        html = build_group_change_rate_table(daily, ["A", "B"], window_days=1)
-        # Aの方が変化率(%)は高いが、増減PVはBの方が大きいためBが上位に来る
-        assert html.index(">B<") < html.index(">A<")
+        # 合計増加数ではBが大きいが、中央値(group_medians)はAの方が大きいとする
+        html = build_group_change_rate_table(
+            daily, ["A", "B"], window_days=1, group_medians={"A": 200, "B": 5}
+        )
+        # 表示順は合計増加数(pv_increase)ではなくgroup_mediansに従うためAが上位に来る
+        assert html.index(">A<") < html.index(">B<")
 
     def test_zero_previous_pv_shown_as_new(self):
         from report import build_group_change_rate_table
@@ -386,7 +393,7 @@ class TestBuildGroupChangeRateTable:
             {"group": "A", "snapshot_date": "2026-05-30", "page_views": 0},
             {"group": "A", "snapshot_date": "2026-05-31", "page_views": 50},
         ])
-        html = build_group_change_rate_table(daily, ["A"], window_days=1)
+        html = build_group_change_rate_table(daily, ["A"], window_days=1, group_medians={"A": 50})
         assert "新規" in html
 
     def test_no_baseline_shows_dash_for_increase(self):
@@ -395,13 +402,23 @@ class TestBuildGroupChangeRateTable:
         daily = pd.DataFrame([
             {"group": "A", "snapshot_date": "2026-05-31", "page_views": 100},
         ])
-        html = build_group_change_rate_table(daily, ["A"], window_days=7)
+        html = build_group_change_rate_table(daily, ["A"], window_days=7, group_medians={})
         assert "データ不足" in html
+
+    def test_missing_median_shows_dash(self):
+        from report import build_group_change_rate_table
+        import pandas as pd
+        daily = pd.DataFrame([
+            {"group": "A", "snapshot_date": "2026-05-30", "page_views": 100},
+            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 110},
+        ])
+        html = build_group_change_rate_table(daily, ["A"], window_days=1, group_medians={})
+        assert "−" in html
 
     def test_empty_groups_returns_placeholder(self):
         from report import build_group_change_rate_table
         import pandas as pd
-        html = build_group_change_rate_table(pd.DataFrame(), [])
+        html = build_group_change_rate_table(pd.DataFrame(), [], window_days=7, group_medians={})
         assert "データがありません" in html
 
 
