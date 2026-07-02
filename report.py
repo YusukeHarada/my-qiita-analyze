@@ -783,25 +783,35 @@ def main() -> None:
     article_rates_by_id = _compute_article_change_rates(df_filtered, TAG_CHANGE_RATE_WINDOW_DAYS)
 
     tag_long_df = explode_tags(df_filtered)
-    tag_medians = median_pv_increase_by_group(tag_long_df, article_rates_by_id)
-    tag_groups = select_top_groups_by_median_pv_increase(tag_medians, TOP_N)
-    if tag_groups:
-        tag_daily = aggregate_group_daily_pv(tag_long_df)
-        tag_chart = build_group_pv_chart(
-            tag_daily, tag_groups, start_date, end_date, "タグ別PV推移", "tag-pv-chart"
-        )
-        tag_table = build_group_change_rate_table(tag_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS, tag_medians)
+    all_tag_names = tag_long_df["group"].unique().tolist()
 
-        keyword_long_df = explode_keywords(df_filtered, tag_groups)
+    if all_tag_names:
+        tag_medians = median_pv_increase_by_group(tag_long_df, article_rates_by_id)
+        tag_groups = select_top_groups_by_median_pv_increase(tag_medians, TOP_N)
+        if tag_groups:
+            tag_daily = aggregate_group_daily_pv(tag_long_df)
+            tag_chart = build_group_pv_chart(
+                tag_daily, tag_groups, start_date, end_date, "タグ別PV推移", "tag-pv-chart"
+            )
+            tag_table = build_group_change_rate_table(
+                tag_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS, tag_medians
+            )
+
+        # キーワードはタグ別ランキングの当落に関わらず、これまでに使われた全タグ名を
+        # タイトル内検索の対象にして、独自に上位N件を選ぶ（タグ名がタイトルに含まれない
+        # ケースが多いため、上位タグに限定すると表示件数が減ってしまう）
+        keyword_long_df = explode_keywords(df_filtered, all_tag_names)
         keyword_medians = median_pv_increase_by_group(keyword_long_df, article_rates_by_id)
-        keyword_daily = aggregate_group_daily_pv(keyword_long_df)
-        keyword_chart = build_group_pv_chart(
-            keyword_daily, tag_groups, start_date, end_date,
-            "キーワード別PV推移（タイトル内）", "keyword-pv-chart",
-        )
-        keyword_table = build_group_change_rate_table(
-            keyword_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS, keyword_medians
-        )
+        keyword_groups = select_top_groups_by_median_pv_increase(keyword_medians, TOP_N)
+        if keyword_groups:
+            keyword_daily = aggregate_group_daily_pv(keyword_long_df)
+            keyword_chart = build_group_pv_chart(
+                keyword_daily, keyword_groups, start_date, end_date,
+                "キーワード別PV推移（タイトル内）", "keyword-pv-chart",
+            )
+            keyword_table = build_group_change_rate_table(
+                keyword_daily, keyword_groups, TAG_CHANGE_RATE_WINDOW_DAYS, keyword_medians
+            )
 
     html = generate_html(
         ranking_table,
