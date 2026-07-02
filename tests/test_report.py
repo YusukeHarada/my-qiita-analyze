@@ -232,24 +232,58 @@ class TestExplodeTags:
         assert explode_tags(pd.DataFrame()).empty
 
 
-class TestTopFrequentTags:
-    def test_returns_tags_sorted_by_article_count(self, sample_df_with_tags):
-        from report import explode_tags, top_frequent_tags
-        long_df = explode_tags(sample_df_with_tags)
-        top = top_frequent_tags(long_df, n=2)
-        # Python は art001・art002 の2記事、Docker は art001 のみの1記事
-        assert top[0] == "Python"
-        assert "Docker" in top
+class TestSelectTopGroupsByChangeRate:
+    def test_sorted_by_absolute_pv_increase_not_percentage(self):
+        from report import select_top_groups_by_change_rate
+        import pandas as pd
+        daily = pd.DataFrame([
+            # A: 10 -> 15 (+5, +50%)
+            {"group": "A", "snapshot_date": "2026-05-30", "page_views": 10},
+            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 15},
+            # B: 1000 -> 1100 (+100, +10%)
+            {"group": "B", "snapshot_date": "2026-05-30", "page_views": 1000},
+            {"group": "B", "snapshot_date": "2026-05-31", "page_views": 1100},
+        ])
+        groups = select_top_groups_by_change_rate(daily, window_days=1, n=2)
+        # Bの方が%は低いが絶対増加数(+100)がAの絶対増加数(+5)より大きいため上位に来る
+        assert groups == ["B", "A"]
+
+    def test_excludes_groups_without_prior_baseline(self):
+        from report import select_top_groups_by_change_rate
+        import pandas as pd
+        daily = pd.DataFrame([
+            {"group": "OnlyToday", "snapshot_date": "2026-05-31", "page_views": 1000},
+            {"group": "HasHistory", "snapshot_date": "2026-05-30", "page_views": 100},
+            {"group": "HasHistory", "snapshot_date": "2026-05-31", "page_views": 110},
+        ])
+        groups = select_top_groups_by_change_rate(daily, window_days=1, n=5)
+        assert groups == ["HasHistory"]
+
+    def test_new_group_ranked_by_current_volume(self):
+        from report import select_top_groups_by_change_rate
+        import pandas as pd
+        daily = pd.DataFrame([
+            # Steady: 100 -> 105 (+5)
+            {"group": "Steady", "snapshot_date": "2026-05-30", "page_views": 100},
+            {"group": "Steady", "snapshot_date": "2026-05-31", "page_views": 105},
+            # New: 0 -> 50 (+50、新規記事などで前期間PVが0だったケース)
+            {"group": "New", "snapshot_date": "2026-05-30", "page_views": 0},
+            {"group": "New", "snapshot_date": "2026-05-31", "page_views": 50},
+        ])
+        groups = select_top_groups_by_change_rate(daily, window_days=1, n=2)
+        assert groups[0] == "New"
 
     def test_limits_to_n(self, sample_df_with_tags):
-        from report import explode_tags, top_frequent_tags
+        from report import explode_tags, aggregate_group_daily_pv, select_top_groups_by_change_rate
         long_df = explode_tags(sample_df_with_tags)
-        assert len(top_frequent_tags(long_df, n=1)) == 1
+        daily = aggregate_group_daily_pv(long_df)
+        groups = select_top_groups_by_change_rate(daily, window_days=1, n=1)
+        assert len(groups) == 1
 
     def test_empty_input_returns_empty_list(self):
-        from report import top_frequent_tags
+        from report import select_top_groups_by_change_rate
         import pandas as pd
-        assert top_frequent_tags(pd.DataFrame(columns=["group", "snapshot_date", "id"])) == []
+        assert select_top_groups_by_change_rate(pd.DataFrame(columns=["group", "snapshot_date", "page_views"])) == []
 
 
 class TestExplodeKeywords:
@@ -287,10 +321,10 @@ class TestAggregateGroupDailyPv:
 
 class TestBuildGroupPvChart:
     def test_returns_html_string(self, sample_df_with_tags):
-        from report import explode_tags, aggregate_group_daily_pv, build_group_pv_chart, top_frequent_tags
+        from report import explode_tags, aggregate_group_daily_pv, build_group_pv_chart, select_top_groups_by_change_rate
         long_df = explode_tags(sample_df_with_tags)
         daily = aggregate_group_daily_pv(long_df)
-        groups = top_frequent_tags(long_df)
+        groups = select_top_groups_by_change_rate(daily, window_days=1)
         html = build_group_pv_chart(daily, groups, "2026-05-30", "2026-05-31", "タグ別PV推移", "tag-pv-chart")
         assert "<div" in html
         assert 'id="tag-pv-chart"' in html
@@ -305,16 +339,27 @@ class TestBuildGroupChangeRateTable:
         html = build_group_change_rate_table(daily, ["Python"], window_days=1)
         assert "+11.1%" in html
 
-    def test_sorted_descending_by_rate(self):
+    def test_shows_absolute_pv_increase_column(self, sample_df_with_tags):
+        from report import explode_tags, aggregate_group_daily_pv, build_group_change_rate_table
+        long_df = explode_tags(sample_df_with_tags)
+        daily = aggregate_group_daily_pv(long_df)
+        html = build_group_change_rate_table(daily, ["Python"], window_days=1)
+        assert "増減PV" in html
+        assert "+150" in html
+
+    def test_sorted_descending_by_absolute_pv_increase_not_rate(self):
         from report import build_group_change_rate_table
         import pandas as pd
         daily = pd.DataFrame([
-            {"group": "A", "snapshot_date": "2026-05-30", "page_views": 100},
-            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 110},
-            {"group": "B", "snapshot_date": "2026-05-30", "page_views": 100},
-            {"group": "B", "snapshot_date": "2026-05-31", "page_views": 200},
+            # A: 10 -> 15 (+5, +50%)
+            {"group": "A", "snapshot_date": "2026-05-30", "page_views": 10},
+            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 15},
+            # B: 1000 -> 1100 (+100, +10%)
+            {"group": "B", "snapshot_date": "2026-05-30", "page_views": 1000},
+            {"group": "B", "snapshot_date": "2026-05-31", "page_views": 1100},
         ])
         html = build_group_change_rate_table(daily, ["A", "B"], window_days=1)
+        # Aの方が変化率(%)は高いが、増減PVはBの方が大きいためBが上位に来る
         assert html.index(">B<") < html.index(">A<")
 
     def test_zero_previous_pv_shown_as_new(self):
@@ -326,6 +371,15 @@ class TestBuildGroupChangeRateTable:
         ])
         html = build_group_change_rate_table(daily, ["A"], window_days=1)
         assert "新規" in html
+
+    def test_no_baseline_shows_dash_for_increase(self):
+        from report import build_group_change_rate_table
+        import pandas as pd
+        daily = pd.DataFrame([
+            {"group": "A", "snapshot_date": "2026-05-31", "page_views": 100},
+        ])
+        html = build_group_change_rate_table(daily, ["A"], window_days=7)
+        assert "データ不足" in html
 
     def test_empty_groups_returns_placeholder(self):
         from report import build_group_change_rate_table
