@@ -40,22 +40,22 @@ class TestResolveDataRange:
 
 
 class TestBuildRankingTable:
-    def test_returns_html_table(self, sample_latest_df):
+    def test_returns_html_table(self, sample_latest_df, sample_df):
         from report import build_ranking_table
-        html = build_ranking_table(sample_latest_df)
+        html = build_ranking_table(sample_latest_df, sample_df)
         assert "<table>" in html
         assert "<thead>" in html
         assert 'id="ranking-tbody"' in html
 
-    def test_sorted_by_page_views_desc(self, sample_latest_df):
+    def test_sorted_by_page_views_desc(self, sample_latest_df, sample_df):
         from report import build_ranking_table
-        html = build_ranking_table(sample_latest_df)
+        html = build_ranking_table(sample_latest_df, sample_df)
         # 記事A（1000PV）が記事B（500PV）より前に来る
         assert html.index("記事A") < html.index("記事B")
 
-    def test_url_is_linked(self, sample_latest_df):
+    def test_url_is_linked(self, sample_latest_df, sample_df):
         from report import build_ranking_table
-        html = build_ranking_table(sample_latest_df)
+        html = build_ranking_table(sample_latest_df, sample_df)
         assert 'href="https://qiita.com/art001"' in html
 
     def test_numbers_formatted_with_comma(self):
@@ -65,15 +65,32 @@ class TestBuildRankingTable:
             "created_at": "2024-01-01", "snapshot_date": "2026-06-01",
             "page_views": 1000, "likes": 0, "stocks": 0,
         }])
-        assert "1,000" in build_ranking_table(df)
+        assert "1,000" in build_ranking_table(df, df)
 
-    def test_rank_starts_at_1(self, sample_latest_df):
+    def test_rank_starts_at_1(self, sample_latest_df, sample_df):
         from report import build_ranking_table
-        html = build_ranking_table(sample_latest_df)
+        html = build_ranking_table(sample_latest_df, sample_df)
         tbody_start = html.index('<tbody id="ranking-tbody">')
         first_td = html.index("<td>", tbody_start)
         first_td_end = html.index("</td>", first_td)
         assert html[first_td + len("<td>"):first_td_end] == "1"
+
+    def test_shows_pv_increase_column(self, sample_latest_df, sample_df):
+        from report import build_ranking_table
+        # art001: 900(2026-05-30) -> 1000(2026-05-31)、window_days=1で+100
+        html = build_ranking_table(sample_latest_df, sample_df, window_days=1)
+        assert "増減PV" in html
+        assert "+100" in html
+
+    def test_no_baseline_shows_dash(self):
+        from report import build_ranking_table
+        df = pd.DataFrame([{
+            "id": "art001", "title": "記事A", "url": "https://q.com/a",
+            "created_at": "2024-01-01", "snapshot_date": "2026-06-01",
+            "page_views": 1000, "likes": 0, "stocks": 0,
+        }])
+        html = build_ranking_table(df, df, window_days=7)
+        assert "−" in html
 
 
 class TestBuildTotalPvChart:

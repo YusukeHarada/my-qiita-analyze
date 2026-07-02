@@ -45,7 +45,7 @@ class TestCollectToReport:
         latest = df[df["snapshot_date"] == latest_date].copy()
 
         html = report.generate_html(
-            report.build_ranking_table(latest),
+            report.build_ranking_table(latest, df),
             "<p>No history</p>",
             "<p>No history</p>",
             latest_date,
