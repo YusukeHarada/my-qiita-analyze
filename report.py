@@ -26,6 +26,7 @@ CHART_COLORS = [
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
 TITLE_MAX_LEN = 30
+TAG_CHANGE_RATE_WINDOW_DAYS = 7
 
 
 def parse_args() -> argparse.Namespace:
@@ -181,6 +182,142 @@ def build_per_article_chart(df: pd.DataFrame, latest: pd.DataFrame, start_date: 
     return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id="per-article-chart")
 
 
+def explode_tags(df: pd.DataFrame) -> pd.DataFrame:
+    cols = ["id", "title", "snapshot_date", "page_views", "group"]
+    if df.empty or "tags" not in df.columns:
+        return pd.DataFrame(columns=cols)
+
+    working = df[df["tags"].notna() & (df["tags"] != "")].copy()
+    if working.empty:
+        return pd.DataFrame(columns=cols)
+
+    working["group"] = working["tags"].str.split(",")
+    exploded = working.explode("group")
+    exploded["group"] = exploded["group"].str.strip()
+    exploded = exploded[exploded["group"] != ""]
+    return exploded[cols].reset_index(drop=True)
+
+
+def top_frequent_tags(long_df: pd.DataFrame, n: int = TOP_N) -> list[str]:
+    if long_df.empty:
+        return []
+    latest_date = long_df["snapshot_date"].max()
+    latest = long_df[long_df["snapshot_date"] == latest_date]
+    counts = latest.groupby("group")["id"].nunique().sort_values(ascending=False)
+    return counts.head(n).index.tolist()
+
+
+def explode_keywords(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
+    cols = ["id", "title", "snapshot_date", "page_views", "group"]
+    if df.empty or not keywords:
+        return pd.DataFrame(columns=cols)
+
+    frames = []
+    for keyword in keywords:
+        matched = df[df["title"].str.contains(keyword, case=False, na=False, regex=False)].copy()
+        if matched.empty:
+            continue
+        matched["group"] = keyword
+        frames.append(matched[cols])
+
+    if not frames:
+        return pd.DataFrame(columns=cols)
+    return pd.concat(frames, ignore_index=True)
+
+
+def aggregate_group_daily_pv(long_df: pd.DataFrame) -> pd.DataFrame:
+    cols = ["group", "snapshot_date", "page_views"]
+    if long_df.empty:
+        return pd.DataFrame(columns=cols)
+    return long_df.groupby(["group", "snapshot_date"])["page_views"].sum().reset_index()
+
+
+def build_group_pv_chart(
+    daily_df: pd.DataFrame, groups: list[str], start_date: str, end_date: str, title: str, div_id: str
+) -> str:
+    fig = go.Figure()
+    for i, group in enumerate(groups):
+        group_df = daily_df[daily_df["group"] == group].sort_values("snapshot_date")
+        fig.add_trace(go.Scatter(
+            x=group_df["snapshot_date"],
+            y=group_df["page_views"],
+            mode="lines+markers",
+            name=group,
+            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+            marker=dict(size=5),
+            hovertemplate=f"{group}<br>%{{x}}<br>PV: %{{y:,}}<extra></extra>",
+        ))
+
+    fig.update_layout(
+        title=title,
+        xaxis=_range_selector_xaxis(start_date, end_date),
+        yaxis_title="合計PV数",
+        hovermode="closest",
+        template="plotly_white",
+        height=450,
+        margin=dict(t=60, r=160),
+        legend=dict(orientation="v", x=1.02, y=1),
+    )
+    return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id=div_id)
+
+
+def build_group_change_rate_table(daily_df: pd.DataFrame, groups: list[str], window_days: int = 7) -> str:
+    if daily_df.empty or not groups:
+        return "<p>データがありません。</p>"
+
+    results = []
+    for group in groups:
+        group_df = daily_df[daily_df["group"] == group].sort_values("snapshot_date")
+        if group_df.empty:
+            continue
+
+        latest_date_str = group_df["snapshot_date"].max()
+        latest_pv = int(group_df.loc[group_df["snapshot_date"] == latest_date_str, "page_views"].iloc[0])
+
+        target_date = (date.fromisoformat(latest_date_str) - timedelta(days=window_days)).isoformat()
+        prev_candidates = group_df[group_df["snapshot_date"] <= target_date]
+        prev_pv = int(prev_candidates.iloc[-1]["page_views"]) if not prev_candidates.empty else None
+
+        if prev_pv is None:
+            rate_value, rate_display = float("-inf"), "データ不足"
+        elif prev_pv == 0:
+            rate_value = float("inf") if latest_pv > 0 else 0.0
+            rate_display = "新規" if latest_pv > 0 else "0.0%"
+        else:
+            rate_value = (latest_pv - prev_pv) / prev_pv * 100
+            rate_display = f"{'+' if rate_value >= 0 else ''}{rate_value:.1f}%"
+
+        results.append(dict(
+            group=group, latest_pv=latest_pv, prev_pv=prev_pv,
+            rate_value=rate_value, rate_display=rate_display,
+        ))
+
+    results.sort(key=lambda r: r["rate_value"], reverse=True)
+
+    rows = ""
+    for r in results:
+        prev_pv_display = f"{r['prev_pv']:,}" if r["prev_pv"] is not None else "−"
+        rows += (
+            f"<tr>"
+            f"<td>{r['group']}</td>"
+            f"<td class='num'>{r['latest_pv']:,}</td>"
+            f"<td class='num'>{prev_pv_display}</td>"
+            f"<td class='num'>{r['rate_display']}</td>"
+            f"</tr>"
+        )
+
+    return f"""
+    <table>
+      <thead>
+        <tr>
+          <th>グループ</th><th>直近PV</th><th>{window_days}日前PV</th><th>変化率</th>
+        </tr>
+      </thead>
+      <tbody>{rows}</tbody>
+    </table>
+    """
+
+
 def build_chart_data_json(df: pd.DataFrame) -> str:
     cols = ["id", "title", "url", "created_at", "snapshot_date", "page_views", "likes", "stocks"]
     data = df[cols].copy()
@@ -199,7 +336,39 @@ def generate_html(
     start_date: str,
     end_date: str,
     chart_data_json: str,
+    tag_chart: str | None = None,
+    tag_table: str | None = None,
+    keyword_chart: str | None = None,
+    keyword_table: str | None = None,
 ) -> str:
+    extra_sections = ""
+    if tag_chart and tag_table:
+        extra_sections += f"""
+    <div class="card">
+      {tag_chart}
+    </div>
+
+    <div class="card">
+      <h2>タグ別PV変化率（直近{TAG_CHANGE_RATE_WINDOW_DAYS}日）</h2>
+      <div class="table-wrapper">
+        {tag_table}
+      </div>
+    </div>
+"""
+    if keyword_chart and keyword_table:
+        extra_sections += f"""
+    <div class="card">
+      {keyword_chart}
+    </div>
+
+    <div class="card">
+      <h2>キーワード別PV変化率（タイトル内・直近{TAG_CHANGE_RATE_WINDOW_DAYS}日）</h2>
+      <div class="table-wrapper">
+        {keyword_table}
+      </div>
+    </div>
+"""
+
     plotly_cdn = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
     data_script = (
         f'<script>\n'
@@ -501,6 +670,7 @@ def generate_html(
     <div class="card">
       {per_article_chart}
     </div>
+    {extra_sections}
   </div>
   {data_script}
   {filter_script}
@@ -537,6 +707,24 @@ def main() -> None:
     per_article_chart = build_per_article_chart(df_filtered, latest_in_range, start_date, end_date)
     chart_data_json = build_chart_data_json(df_filtered)
 
+    tag_chart = tag_table = keyword_chart = keyword_table = None
+    tag_long_df = explode_tags(df_filtered)
+    if not tag_long_df.empty:
+        tag_groups = top_frequent_tags(tag_long_df, TOP_N)
+        tag_daily = aggregate_group_daily_pv(tag_long_df)
+        tag_chart = build_group_pv_chart(
+            tag_daily, tag_groups, start_date, end_date, "タグ別PV推移", "tag-pv-chart"
+        )
+        tag_table = build_group_change_rate_table(tag_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS)
+
+        keyword_long_df = explode_keywords(df_filtered, tag_groups)
+        keyword_daily = aggregate_group_daily_pv(keyword_long_df)
+        keyword_chart = build_group_pv_chart(
+            keyword_daily, tag_groups, start_date, end_date,
+            "キーワード別PV推移（タイトル内）", "keyword-pv-chart",
+        )
+        keyword_table = build_group_change_rate_table(keyword_daily, tag_groups, TAG_CHANGE_RATE_WINDOW_DAYS)
+
     html = generate_html(
         ranking_table,
         total_chart,
@@ -547,6 +735,10 @@ def main() -> None:
         start_date,
         end_date,
         chart_data_json,
+        tag_chart,
+        tag_table,
+        keyword_chart,
+        keyword_table,
     )
 
     os.makedirs(REPORT_DIR, exist_ok=True)

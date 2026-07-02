@@ -32,6 +32,9 @@ def init_db(conn: sqlite3.Connection) -> None:
             PRIMARY KEY (id, snapshot_date)
         )
     """)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(snapshots)")}
+    if "tags" not in columns:
+        conn.execute("ALTER TABLE snapshots ADD COLUMN tags TEXT")
     conn.commit()
 
 
@@ -64,11 +67,12 @@ def fetch_all_items() -> list[dict]:
 
 def save_snapshot(conn: sqlite3.Connection, items: list[dict], today: str) -> int:
     for item in items:
+        tags = ",".join(tag["name"] for tag in item.get("tags", []))
         conn.execute(
             """
             INSERT OR REPLACE INTO snapshots
-                (id, title, url, created_at, snapshot_date, page_views, likes, stocks)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (id, title, url, created_at, snapshot_date, page_views, likes, stocks, tags)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 item["id"],
@@ -79,8 +83,15 @@ def save_snapshot(conn: sqlite3.Connection, items: list[dict], today: str) -> in
                 item.get("page_views_count"),
                 item.get("likes_count", 0),
                 item.get("stocks_count", 0),
+                tags,
             ),
         )
+        # Qiita APIはタグの履歴を持たないため、現在のタグを未設定の過去スナップショットにも遡って埋める
+        if tags:
+            conn.execute(
+                "UPDATE snapshots SET tags = ? WHERE id = ? AND (tags IS NULL OR tags = '')",
+                (tags, item["id"]),
+            )
     conn.commit()
     return len(items)
 
