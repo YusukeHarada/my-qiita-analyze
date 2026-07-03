@@ -103,10 +103,9 @@ def build_ranking_table(
     """
 
 
-def _range_selector_xaxis(start_date: str, end_date: str) -> dict:
-    return dict(
+def _range_selector_xaxis(start_date: str, end_date: str, default_all: bool = False) -> dict:
+    layout = dict(
         type="date",
-        range=[start_date, end_date],
         rangeselector=dict(
             buttons=[
                 dict(count=1,  label="1ヶ月", step="month", stepmode="backward"),
@@ -121,6 +120,9 @@ def _range_selector_xaxis(start_date: str, end_date: str) -> dict:
         ),
         rangeslider=dict(visible=True, thickness=0.05),
     )
+    if not default_all:
+        layout["range"] = [start_date, end_date]
+    return layout
 
 
 def build_total_pv_chart(df: pd.DataFrame, start_date: str, end_date: str) -> str:
@@ -314,7 +316,7 @@ def build_group_pv_chart(
 
     fig.update_layout(
         title=title,
-        xaxis=_range_selector_xaxis(start_date, end_date),
+        xaxis=_range_selector_xaxis(start_date, end_date, default_all=True),
         yaxis_title="合計PV数",
         hovermode="closest",
         template="plotly_white",
