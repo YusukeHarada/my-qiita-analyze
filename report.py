@@ -94,8 +94,13 @@ def build_ranking_table(
     <table>
       <thead>
         <tr>
-          <th>#</th><th>タイトル</th><th>投稿日</th>
-          <th>PV数</th><th>増減PV（{window_days}日）</th><th>いいね</th><th>ストック</th>
+          <th>#</th>
+          <th class="sortable" data-key="title">タイトル<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="created_at">投稿日<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="page_views">PV数<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="pv_increase">増減PV（{window_days}日）<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="likes">いいね<span class="sort-arrow"></span></th>
+          <th class="sortable" data-key="stocks">ストック<span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="ranking-tbody">{rows}</tbody>
@@ -558,32 +563,72 @@ def generate_html(
     document.getElementById("stat-total-pv").textContent = totalPv.toLocaleString("ja-JP");
   }
 
-  function pvIncreaseDisplay(data, id, latestDateStr) {
+  function pvIncreaseValue(data, id, latestDateStr) {
     var rows = data.filter(function (r) { return r.id === id; })
       .sort(function (a, b) { return a.snapshot_date < b.snapshot_date ? -1 : 1; });
     var targetDate = new Date(latestDateStr + "T00:00:00Z");
     targetDate.setUTCDate(targetDate.getUTCDate() - PV_INCREASE_WINDOW_DAYS);
     var targetDateStr = targetDate.toISOString().slice(0, 10);
     var priorRows = rows.filter(function (r) { return r.snapshot_date <= targetDateStr; });
-    if (priorRows.length === 0) { return "−"; }
+    if (priorRows.length === 0) { return null; }
     var prevPv = priorRows[priorRows.length - 1].page_views || 0;
     var latestRow = rows.filter(function (r) { return r.snapshot_date === latestDateStr; })[0];
     var latestPv = latestRow ? (latestRow.page_views || 0) : 0;
-    var diff = latestPv - prevPv;
+    return latestPv - prevPv;
+  }
+
+  function pvIncreaseDisplay(diff) {
+    if (diff === null) { return "−"; }
     return (diff >= 0 ? "+" : "") + diff.toLocaleString("ja-JP");
+  }
+
+  var rankingSort = {key: "page_views", dir: "desc"};
+
+  function rankingSortValue(row, key, data, ld) {
+    switch (key) {
+      case "title": return row.title || "";
+      case "created_at": return row.created_at || "";
+      case "pv_increase":
+        var diff = pvIncreaseValue(data, row.id, ld);
+        return diff === null ? -Infinity : diff;
+      case "likes": return row.likes || 0;
+      case "stocks": return row.stocks || 0;
+      case "page_views":
+      default: return row.page_views || 0;
+    }
+  }
+
+  function updateSortIndicators() {
+    document.querySelectorAll("th.sortable").forEach(function (th) {
+      var arrow = th.querySelector(".sort-arrow");
+      if (th.getAttribute("data-key") === rankingSort.key) {
+        arrow.textContent = rankingSort.dir === "asc" ? "▲" : "▼";
+      } else {
+        arrow.textContent = "";
+      }
+    });
   }
 
   function updateRankingTable(data) {
     var ld = latestDate(data);
     var latest = data.filter(function (r) { return r.snapshot_date === ld; });
-    latest.sort(function (a, b) { return (b.page_views || 0) - (a.page_views || 0); });
+    var key = rankingSort.key;
+    var dir = rankingSort.dir === "asc" ? 1 : -1;
+    latest.sort(function (a, b) {
+      var va = rankingSortValue(a, key, data, ld);
+      var vb = rankingSortValue(b, key, data, ld);
+      if (va < vb) { return -1 * dir; }
+      if (va > vb) { return 1 * dir; }
+      return 0;
+    });
+    updateSortIndicators();
     document.getElementById("ranking-tbody").innerHTML = latest.map(function (r, i) {
       return "<tr>" +
         "<td>" + (i + 1) + "</td>" +
         "<td class='title'><a href='" + r.url + "' target='_blank'>" + r.title + "</a></td>" +
         "<td>" + r.created_at + "</td>" +
         "<td class='num'>" + (r.page_views || 0).toLocaleString("ja-JP") + "</td>" +
-        "<td class='num'>" + pvIncreaseDisplay(data, r.id, ld) + "</td>" +
+        "<td class='num'>" + pvIncreaseDisplay(pvIncreaseValue(data, r.id, ld)) + "</td>" +
         "<td class='num'>" + (r.likes || 0).toLocaleString("ja-JP") + "</td>" +
         "<td class='num'>" + (r.stocks || 0).toLocaleString("ja-JP") + "</td>" +
         "</tr>";
@@ -611,6 +656,18 @@ def generate_html(
     document.getElementById("articleEnd").value = "";
     document.querySelectorAll(".quick-filter-btn").forEach(function (b) { b.classList.remove("active"); });
     applyFilter();
+  });
+  document.querySelectorAll("th.sortable").forEach(function (th) {
+    th.addEventListener("click", function () {
+      var key = th.getAttribute("data-key");
+      if (rankingSort.key === key) {
+        rankingSort.dir = rankingSort.dir === "asc" ? "desc" : "asc";
+      } else {
+        rankingSort.key = key;
+        rankingSort.dir = (key === "title" || key === "created_at") ? "asc" : "desc";
+      }
+      updateRankingTable(filtered());
+    });
   });
   document.querySelectorAll(".quick-filter-btn").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -658,6 +715,9 @@ def generate_html(
     h2 {{ font-size: 1.2rem; margin-bottom: 16px; color: #444; }}
     table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
     th {{ background: #f0f0f0; padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }}
+    th.sortable {{ cursor: pointer; user-select: none; white-space: nowrap; }}
+    th.sortable:hover {{ background: #e6e6e6; }}
+    th.sortable .sort-arrow {{ display: inline-block; width: 1em; color: #55C500; }}
     td {{ padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: top; }}
     tr:hover td {{ background: #fafafa; }}
     td.title {{ max-width: 400px; }}
