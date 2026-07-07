@@ -82,15 +82,37 @@ class TestBuildRankingTable:
         assert "増減PV" in html
         assert "+100" in html
 
-    def test_no_baseline_shows_dash(self):
+    def test_no_baseline_falls_back_to_increase_since_first_snapshot(self):
         from report import build_ranking_table
+        # window_days分の履歴がない場合、直近との比較ではなく
+        # 収集開始（公開）時点からの増加量を表示する
         df = pd.DataFrame([{
             "id": "art001", "title": "記事A", "url": "https://q.com/a",
             "created_at": "2024-01-01", "snapshot_date": "2026-06-01",
             "page_views": 1000, "likes": 0, "stocks": 0,
         }])
         html = build_ranking_table(df, df, window_days=7)
-        assert "−" in html
+        assert "+0" in html
+
+    def test_no_baseline_uses_earliest_snapshot_as_baseline(self):
+        from report import build_ranking_table
+        df = pd.DataFrame([
+            {
+                "id": "art001", "title": "記事A", "url": "https://q.com/a",
+                "created_at": "2026-05-31", "snapshot_date": "2026-05-31",
+                "page_views": 100, "likes": 0, "stocks": 0,
+            },
+            {
+                "id": "art001", "title": "記事A", "url": "https://q.com/a",
+                "created_at": "2026-05-31", "snapshot_date": "2026-06-01",
+                "page_views": 150, "likes": 0, "stocks": 0,
+            },
+        ])
+        latest = df[df["snapshot_date"] == "2026-06-01"]
+        # window_days=7だが、公開2日目のため過去7日分の履歴がない
+        # -> 公開時点(100)からの増加量である+50を表示する
+        html = build_ranking_table(latest, df, window_days=7)
+        assert "+50" in html
 
 
 class TestBuildTotalPvChart:
