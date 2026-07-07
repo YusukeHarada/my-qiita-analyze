@@ -60,23 +60,20 @@ def resolve_date_range(df: pd.DataFrame, start: str | None, end: str | None) -> 
     return start_date, end_date
 
 
-def build_ranking_table(
-    latest: pd.DataFrame, df_filtered: pd.DataFrame, window_days: int = TAG_CHANGE_RATE_WINDOW_DAYS
-) -> str:
-    ranked = latest.copy()
-    ranked[["page_views", "likes", "stocks"]] = ranked[["page_views", "likes", "stocks"]].fillna(0)
-    ranked = ranked.sort_values("page_views", ascending=False).reset_index(drop=True)
-    ranked.index += 1
+def compute_article_pv_increases(
+    latest: pd.DataFrame, df_filtered: pd.DataFrame, window_days: int
+) -> dict[str, int | None]:
+    """記事ごとのwindow_days分の増減PVを計算する。
 
+    window_days分の履歴がない場合のフォールバックとして、公開間もない記事は
+    公開時点(=0)からの増加量とみなしPV数をそのまま使い、データ収集期間が
+    足りないだけの古い記事は最初に記録されたスナップショットからの増加量を使う。
+    """
     rates_by_id = _compute_article_change_rates(df_filtered, window_days)
-    # window_days分の履歴がない場合のフォールバック用（公開間もない記事は公開時点=0からの
-    # 増加量とみなしPV数をそのまま使い、データ収集期間が足りないだけの古い記事は
-    # 最初に記録されたスナップショットからの増加量を使う）
     first_pv_by_id = df_filtered.sort_values("snapshot_date").groupby("id")["page_views"].first()
 
-    rows = ""
-    for rank, row in ranked.iterrows():
-        title_link = f'<a href="{row["url"]}" target="_blank">{row["title"]}</a>'
+    increases: dict[str, int | None] = {}
+    for _, row in latest.iterrows():
         rate = rates_by_id.get(row["id"])
         if rate is not None and rate["prev_pv"] is not None:
             pv_increase = rate["pv_increase"]
@@ -89,6 +86,24 @@ def build_ranking_table(
             else:
                 first_pv = first_pv_by_id.get(row["id"])
                 pv_increase = None if first_pv is None else int(row["page_views"]) - int(first_pv)
+        increases[row["id"]] = pv_increase
+    return increases
+
+
+def build_ranking_table(
+    latest: pd.DataFrame, df_filtered: pd.DataFrame, window_days: int = TAG_CHANGE_RATE_WINDOW_DAYS
+) -> str:
+    ranked = latest.copy()
+    ranked[["page_views", "likes", "stocks"]] = ranked[["page_views", "likes", "stocks"]].fillna(0)
+    ranked = ranked.sort_values("page_views", ascending=False).reset_index(drop=True)
+    ranked.index += 1
+
+    pv_increases = compute_article_pv_increases(ranked, df_filtered, window_days)
+
+    rows = ""
+    for rank, row in ranked.iterrows():
+        title_link = f'<a href="{row["url"]}" target="_blank">{row["title"]}</a>'
+        pv_increase = pv_increases.get(row["id"])
         if pv_increase is None:
             increase_display = "−"
         else:
@@ -213,6 +228,92 @@ def build_per_article_chart(df: pd.DataFrame, latest: pd.DataFrame, start_date: 
         legend=dict(orientation="v", x=1.02, y=1),
     )
     return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id="per-article-chart")
+
+
+def select_top_pv_increase_ids(pv_increases: dict[str, int | None], top_n: int = TOP_N) -> list[str]:
+    ranked = sorted(
+        ((aid, v) for aid, v in pv_increases.items() if v is not None),
+        key=lambda kv: kv[1], reverse=True,
+    )
+    return [aid for aid, _ in ranked[:top_n]]
+
+
+def build_pv_increase_bar_chart(
+    latest: pd.DataFrame, pv_increases: dict[str, int | None], top_ids: list[str], window_days: int
+) -> str:
+    if not top_ids:
+        return ""
+
+    titles = latest.set_index("id")["title"].to_dict()
+    # 横棒グラフは上から降順に見せたいので、描画順を逆にしておく
+    ordered_ids = list(reversed(top_ids))
+    full_titles = [titles.get(aid, aid) for aid in ordered_ids]
+    short_titles = [t if len(t) <= TITLE_MAX_LEN else t[:TITLE_MAX_LEN] + "…" for t in full_titles]
+    values = [pv_increases[aid] for aid in ordered_ids]
+    colors = ["#d62728" if v < 0 else "#55C500" for v in values]
+
+    fig = go.Figure(go.Bar(
+        x=values,
+        y=short_titles,
+        orientation="h",
+        marker=dict(color=colors),
+        text=[f"{'+' if v >= 0 else ''}{v:,}" for v in values],
+        textposition="outside",
+        customdata=full_titles,
+        hovertemplate="%{customdata}<br>増減PV: %{x:,}<extra></extra>",
+    ))
+    fig.update_layout(
+        title=f"増減PV上位{len(top_ids)}記事（直近{window_days}日）",
+        xaxis_title="増減PV",
+        yaxis=dict(automargin=True),
+        template="plotly_white",
+        height=max(320, 40 * len(top_ids) + 100),
+        margin=dict(t=60, r=60),
+    )
+    return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id="pv-increase-bar-chart")
+
+
+def build_pv_increase_trend_chart(
+    df_filtered: pd.DataFrame, top_ids: list[str], start_date: str, end_date: str
+) -> str:
+    if not top_ids:
+        return ""
+
+    titles = df_filtered.drop_duplicates("id").set_index("id")["title"].to_dict()
+
+    fig = go.Figure()
+    for i, article_id in enumerate(top_ids):
+        article_df = df_filtered[df_filtered["id"] == article_id].sort_values("snapshot_date")
+        diffs = article_df["page_views"].diff()
+        plot_df = article_df.assign(pv_diff=diffs).dropna(subset=["pv_diff"])
+        if plot_df.empty:
+            continue
+        full_title = titles.get(article_id, article_id)
+        short_title = full_title if len(full_title) <= TITLE_MAX_LEN else full_title[:TITLE_MAX_LEN] + "…"
+        fig.add_trace(go.Scatter(
+            x=plot_df["snapshot_date"],
+            y=plot_df["pv_diff"],
+            mode="lines+markers",
+            name=short_title,
+            line=dict(color=CHART_COLORS[i % len(CHART_COLORS)], width=2),
+            marker=dict(size=5),
+            hovertemplate=f"{full_title}<br>%{{x}}<br>増減PV（前日比）: %{{y:,}}<extra></extra>",
+        ))
+
+    if not fig.data:
+        return ""
+
+    fig.update_layout(
+        title="増減PV推移（前日比・増減PV上位記事）",
+        xaxis=_range_selector_xaxis(start_date, end_date, default_all=True),
+        yaxis_title="増減PV（前日比）",
+        hovermode="closest",
+        template="plotly_white",
+        height=450,
+        margin=dict(t=60, r=160),
+        legend=dict(orientation="v", x=1.02, y=1),
+    )
+    return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id="pv-increase-trend-chart")
 
 
 def explode_tags(df: pd.DataFrame) -> pd.DataFrame:
@@ -417,8 +518,22 @@ def generate_html(
     tag_table: str | None = None,
     keyword_chart: str | None = None,
     keyword_table: str | None = None,
+    pv_increase_bar_chart: str | None = None,
+    pv_increase_trend_chart: str | None = None,
 ) -> str:
     extra_sections = ""
+    if pv_increase_bar_chart:
+        extra_sections += f"""
+    <div class="card">
+      {pv_increase_bar_chart}
+    </div>
+"""
+    if pv_increase_trend_chart:
+        extra_sections += f"""
+    <div class="card">
+      {pv_increase_trend_chart}
+    </div>
+"""
     if tag_chart and tag_table:
         extra_sections += f"""
     <div class="card">
@@ -868,6 +983,15 @@ def main() -> None:
     per_article_chart = build_per_article_chart(df_filtered, latest_in_range, start_date, end_date)
     chart_data_json = build_chart_data_json(df_filtered)
 
+    pv_increases = compute_article_pv_increases(latest_in_range, df_filtered, TAG_CHANGE_RATE_WINDOW_DAYS)
+    top_increase_ids = select_top_pv_increase_ids(pv_increases, TOP_N)
+    pv_increase_bar_chart = build_pv_increase_bar_chart(
+        latest_in_range, pv_increases, top_increase_ids, TAG_CHANGE_RATE_WINDOW_DAYS
+    )
+    pv_increase_trend_chart = build_pv_increase_trend_chart(
+        df_filtered, top_increase_ids, start_date, end_date
+    )
+
     tag_chart = tag_table = keyword_chart = keyword_table = None
     article_rates_by_id = _compute_article_change_rates(df_filtered, TAG_CHANGE_RATE_WINDOW_DAYS)
 
@@ -916,6 +1040,8 @@ def main() -> None:
         tag_table,
         keyword_chart,
         keyword_table,
+        pv_increase_bar_chart,
+        pv_increase_trend_chart,
     )
 
     os.makedirs(REPORT_DIR, exist_ok=True)

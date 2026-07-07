@@ -164,6 +164,67 @@ class TestBuildPerArticleChart:
         assert "\\u2026" in html or "…" in html
 
 
+class TestComputeArticlePvIncreases:
+    def test_computes_window_day_increase(self, sample_latest_df, sample_df):
+        from report import compute_article_pv_increases
+        # art001: 900(2026-05-30) -> 1000(2026-05-31)、window_days=1で+100
+        # art002: 450(2026-05-30) -> 500(2026-05-31)、window_days=1で+50
+        increases = compute_article_pv_increases(sample_latest_df, sample_df, window_days=1)
+        assert increases["art001"] == 100
+        assert increases["art002"] == 50
+
+    def test_recent_article_uses_pv_count(self):
+        from report import compute_article_pv_increases
+        df = pd.DataFrame([
+            {"id": "art001", "title": "記事A", "url": "https://q.com/a",
+             "created_at": "2026-05-31", "snapshot_date": "2026-05-31",
+             "page_views": 100, "likes": 0, "stocks": 0},
+            {"id": "art001", "title": "記事A", "url": "https://q.com/a",
+             "created_at": "2026-05-31", "snapshot_date": "2026-06-01",
+             "page_views": 150, "likes": 0, "stocks": 0},
+        ])
+        latest = df[df["snapshot_date"] == "2026-06-01"]
+        increases = compute_article_pv_increases(latest, df, window_days=7)
+        assert increases["art001"] == 150
+
+
+class TestSelectTopPvIncreaseIds:
+    def test_sorts_descending_and_limits(self):
+        from report import select_top_pv_increase_ids
+        increases = {"a": 10, "b": 50, "c": 30, "d": None}
+        assert select_top_pv_increase_ids(increases, top_n=2) == ["b", "c"]
+
+    def test_excludes_none_values(self):
+        from report import select_top_pv_increase_ids
+        increases = {"a": None, "b": 5}
+        assert select_top_pv_increase_ids(increases, top_n=10) == ["b"]
+
+
+class TestBuildPvIncreaseBarChart:
+    def test_returns_html_string(self, sample_latest_df):
+        from report import build_pv_increase_bar_chart
+        pv_increases = {"art001": 100, "art002": 50}
+        html = build_pv_increase_bar_chart(sample_latest_df, pv_increases, ["art001", "art002"], window_days=7)
+        assert "<div" in html
+        assert 'id="pv-increase-bar-chart"' in html
+
+    def test_empty_top_ids_returns_empty_string(self, sample_latest_df):
+        from report import build_pv_increase_bar_chart
+        assert build_pv_increase_bar_chart(sample_latest_df, {}, [], window_days=7) == ""
+
+
+class TestBuildPvIncreaseTrendChart:
+    def test_returns_html_string(self, sample_df):
+        from report import build_pv_increase_trend_chart
+        html = build_pv_increase_trend_chart(sample_df, ["art001", "art002"], "2026-05-30", "2026-05-31")
+        assert "<div" in html
+        assert 'id="pv-increase-trend-chart"' in html
+
+    def test_empty_top_ids_returns_empty_string(self, sample_df):
+        from report import build_pv_increase_trend_chart
+        assert build_pv_increase_trend_chart(sample_df, [], "2026-05-30", "2026-05-31") == ""
+
+
 class TestBuildChartDataJson:
     def test_returns_json_string(self, sample_df):
         from report import build_chart_data_json
