@@ -69,7 +69,9 @@ def build_ranking_table(
     ranked.index += 1
 
     rates_by_id = _compute_article_change_rates(df_filtered, window_days)
-    # window_days分の履歴がない（公開間もない）記事は、公開時点からの増加量を代わりに使う
+    # window_days分の履歴がない場合のフォールバック用（公開間もない記事は公開時点=0からの
+    # 増加量とみなしPV数をそのまま使い、データ収集期間が足りないだけの古い記事は
+    # 最初に記録されたスナップショットからの増加量を使う）
     first_pv_by_id = df_filtered.sort_values("snapshot_date").groupby("id")["page_views"].first()
 
     rows = ""
@@ -79,8 +81,14 @@ def build_ranking_table(
         if rate is not None and rate["prev_pv"] is not None:
             pv_increase = rate["pv_increase"]
         else:
-            first_pv = first_pv_by_id.get(row["id"])
-            pv_increase = None if first_pv is None else int(row["page_views"]) - int(first_pv)
+            article_age_days = (
+                date.fromisoformat(row["snapshot_date"]) - date.fromisoformat(row["created_at"])
+            ).days
+            if article_age_days < window_days:
+                pv_increase = int(row["page_views"])
+            else:
+                first_pv = first_pv_by_id.get(row["id"])
+                pv_increase = None if first_pv is None else int(row["page_views"]) - int(first_pv)
         if pv_increase is None:
             increase_display = "−"
         else:
@@ -574,17 +582,26 @@ def generate_html(
     var rows = data.filter(function (r) { return r.id === id; })
       .sort(function (a, b) { return a.snapshot_date < b.snapshot_date ? -1 : 1; });
     if (rows.length === 0) { return null; }
+    var latestRow = rows.filter(function (r) { return r.snapshot_date === latestDateStr; })[0];
+    var latestPv = latestRow ? (latestRow.page_views || 0) : 0;
     var targetDate = new Date(latestDateStr + "T00:00:00Z");
     targetDate.setUTCDate(targetDate.getUTCDate() - PV_INCREASE_WINDOW_DAYS);
     var targetDateStr = targetDate.toISOString().slice(0, 10);
     var priorRows = rows.filter(function (r) { return r.snapshot_date <= targetDateStr; });
-    // window日分の履歴がない（公開間もない）記事は、公開時点からの増加量を代わりに使う
-    var prevPv = priorRows.length > 0
-      ? (priorRows[priorRows.length - 1].page_views || 0)
-      : (rows[0].page_views || 0);
-    var latestRow = rows.filter(function (r) { return r.snapshot_date === latestDateStr; })[0];
-    var latestPv = latestRow ? (latestRow.page_views || 0) : 0;
-    return latestPv - prevPv;
+    if (priorRows.length > 0) {
+      return latestPv - (priorRows[priorRows.length - 1].page_views || 0);
+    }
+    // window日分の履歴がない場合のフォールバック（公開間もない記事は公開時点=0からの
+    // 増加量とみなしPV数をそのまま使い、データ収集期間が足りないだけの古い記事は
+    // 最初に記録されたスナップショットからの増加量を使う）
+    var createdAt = (latestRow || rows[0]).created_at;
+    var ageDays = Math.round(
+      (new Date(latestDateStr + "T00:00:00Z") - new Date(createdAt + "T00:00:00Z")) / 86400000
+    );
+    if (ageDays < PV_INCREASE_WINDOW_DAYS) {
+      return latestPv;
+    }
+    return latestPv - (rows[0].page_views || 0);
   }
 
   function pvIncreaseDisplay(diff) {
