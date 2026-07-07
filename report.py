@@ -26,6 +26,10 @@ CHART_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
 ]
+BRAND_COLOR = "#55C500"
+BRAND_COLOR_BG = "#f0f0f0"
+BRAND_COLOR_BG_DARK = "#2b2f35"
+NEGATIVE_COLOR = "#d62728"
 TITLE_MAX_LEN = 30
 TAG_CHANGE_RATE_WINDOW_DAYS = 7
 
@@ -150,8 +154,8 @@ def _range_selector_xaxis(start_date: str, end_date: str, default_all: bool = Fa
                 dict(count=2,  label="2年",   step="year",  stepmode="backward"),
                 dict(step="all", label="全期間"),
             ],
-            bgcolor="#f0f0f0",
-            activecolor="#55C500",
+            bgcolor=BRAND_COLOR_BG,
+            activecolor=BRAND_COLOR,
         ),
         rangeslider=dict(visible=True, thickness=0.05),
     )
@@ -170,7 +174,7 @@ def build_total_pv_chart(df: pd.DataFrame, start_date: str, end_date: str) -> st
         y=daily_total["total_pv"],
         mode="lines+markers",
         name="合計PV",
-        line=dict(color="#55C500", width=2),
+        line=dict(color=BRAND_COLOR, width=2),
         marker=dict(size=6),
         hovertemplate="%{x}<br>合計PV: %{y:,}<extra></extra>",
     ))
@@ -250,7 +254,7 @@ def build_pv_increase_bar_chart(
     full_titles = [titles.get(aid, aid) for aid in ordered_ids]
     short_titles = [t if len(t) <= TITLE_MAX_LEN else t[:TITLE_MAX_LEN] + "…" for t in full_titles]
     values = [pv_increases[aid] for aid in ordered_ids]
-    colors = ["#d62728" if v < 0 else "#55C500" for v in values]
+    colors = [NEGATIVE_COLOR if v < 0 else BRAND_COLOR for v in values]
 
     fig = go.Figure(go.Bar(
         x=values,
@@ -504,74 +508,151 @@ def build_chart_data_json(df: pd.DataFrame) -> str:
     return data.to_json(orient="records", force_ascii=False)
 
 
-def generate_html(
-    ranking_table: str,
-    total_chart: str,
-    per_article_chart: str,
-    latest_date: str,
-    total_pv: int,
-    article_count: int,
-    start_date: str,
-    end_date: str,
-    chart_data_json: str,
-    tag_chart: str | None = None,
-    tag_table: str | None = None,
-    keyword_chart: str | None = None,
-    keyword_table: str | None = None,
-    pv_increase_bar_chart: str | None = None,
-    pv_increase_trend_chart: str | None = None,
-) -> str:
-    extra_sections = ""
-    if pv_increase_bar_chart:
-        extra_sections += f"""
-    <div class="card">
-      {pv_increase_bar_chart}
-    </div>
-"""
-    if pv_increase_trend_chart:
-        extra_sections += f"""
-    <div class="card">
-      {pv_increase_trend_chart}
-    </div>
-"""
-    if tag_chart and tag_table:
-        extra_sections += f"""
-    <div class="card">
-      {tag_chart}
-    </div>
+def _build_style_block() -> str:
+    return f"""<style>
+    :root {{
+      --color-brand: {BRAND_COLOR};
+      --color-brand-bg: {BRAND_COLOR_BG};
+      --color-bg: #f5f5f5;
+      --color-surface: #ffffff;
+      --color-text: #333333;
+      --color-heading: #333333;
+      --color-text-muted: #777777;
+      --color-text-faint: #aaaaaa;
+      --color-border: #e2e2e2;
+      --color-border-strong: #dddddd;
+      --color-row-divider: #eeeeee;
+      --color-row-hover: #fafafa;
+      --color-row-alt: #fafbfa;
+      --color-link: #0066cc;
+      --color-input-border: #cccccc;
+      --color-btn-bg: {BRAND_COLOR_BG};
+      --color-btn-bg-hover: #e0e0e0;
+      --color-th-hover: #e6e6e6;
+      --shadow-card: 0 2px 8px rgba(0,0,0,.06);
+      --radius-card: 10px;
+      --radius-btn: 4px;
+    }}
 
-    <div class="card">
-      <h2>タグ別PV変化率（直近{TAG_CHANGE_RATE_WINDOW_DAYS}日）</h2>
-      <div class="table-wrapper">
-        {tag_table}
-      </div>
-    </div>
-"""
-    if keyword_chart and keyword_table:
-        extra_sections += f"""
-    <div class="card">
-      {keyword_chart}
-    </div>
+    @media (prefers-color-scheme: dark) {{
+      :root {{
+        --color-bg: #14161a;
+        --color-surface: #1d2025;
+        --color-text: #e4e6eb;
+        --color-heading: #f2f3f5;
+        --color-text-muted: #9aa0a6;
+        --color-text-faint: #767b82;
+        --color-border: #2c3036;
+        --color-border-strong: #33383f;
+        --color-row-divider: #2a2e34;
+        --color-row-hover: #23262b;
+        --color-row-alt: #202226;
+        --color-link: #6cb6ff;
+        --color-input-border: #3a3f46;
+        --color-btn-bg: #22252a;
+        --color-btn-bg-hover: #2b2f35;
+        --color-th-hover: #2b2f35;
+        --shadow-card: 0 2px 10px rgba(0,0,0,.35);
+      }}
+    }}
 
-    <div class="card">
-      <h2>キーワード別PV変化率（タイトル内・直近{TAG_CHANGE_RATE_WINDOW_DAYS}日）</h2>
-      <div class="table-wrapper">
-        {keyword_table}
-      </div>
-    </div>
-"""
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--color-bg); color: var(--color-text); }}
+    .container {{ max-width: 1200px; margin: 0 auto; padding: 24px; }}
+    h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: var(--color-brand); }}
+    .meta {{ color: var(--color-text-muted); font-size: 0.9rem; margin-bottom: 24px; }}
+    .meta-note {{ color: var(--color-text-faint); font-size: 0.8rem; }}
+    .stats {{ display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }}
+    .stat-card {{ background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); padding: 20px 28px; box-shadow: var(--shadow-card); }}
+    .stat-card .label {{ font-size: 0.8rem; color: var(--color-text-muted); margin-bottom: 4px; }}
+    .stat-card .value {{ font-size: 2rem; font-weight: 700; color: var(--color-brand); }}
+    .card {{ background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-card); padding: 24px; margin-bottom: 24px; box-shadow: var(--shadow-card); }}
+    h2 {{ font-size: 1.2rem; margin-bottom: 16px; color: var(--color-heading); }}
+    table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+    th {{ background: var(--color-btn-bg); padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid var(--color-border-strong); color: var(--color-heading); }}
+    th.sortable {{ cursor: pointer; user-select: none; white-space: nowrap; }}
+    th.sortable:hover {{ background: var(--color-th-hover); }}
+    th.sortable .sort-arrow {{ display: inline-block; width: 1em; color: var(--color-brand); }}
+    td {{ padding: 10px 12px; border-bottom: 1px solid var(--color-row-divider); vertical-align: top; }}
+    tbody tr:nth-child(even) td {{ background: var(--color-row-alt); }}
+    tr:hover td {{ background: var(--color-row-hover); }}
+    td.title {{ max-width: 400px; }}
+    td.title a {{ color: var(--color-link); text-decoration: none; word-break: break-word; }}
+    td.title a:hover {{ text-decoration: underline; }}
+    td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
+    .date-filter {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
+    .date-filter label {{ display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: var(--color-text); }}
+    .date-filter input[type="date"] {{ padding: 6px 10px; border: 1px solid var(--color-input-border); border-radius: var(--radius-btn); font-size: 0.9rem; background: var(--color-surface); color: var(--color-text); }}
+    .date-filter button {{ padding: 6px 14px; background: var(--color-btn-bg); border: 1px solid var(--color-input-border); border-radius: var(--radius-btn); cursor: pointer; font-size: 0.9rem; color: var(--color-text); }}
+    .date-filter button:hover {{ background: var(--color-btn-bg-hover); }}
+    .quick-filters {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }}
+    .quick-filter-btn {{ padding: 6px 14px; background: var(--color-btn-bg); border: 1px solid var(--color-input-border); border-radius: var(--radius-btn); cursor: pointer; font-size: 0.9rem; color: var(--color-text); }}
+    .quick-filter-btn:hover {{ background: var(--color-btn-bg-hover); }}
+    .quick-filter-btn.active {{ background: var(--color-brand); color: #fff; border-color: var(--color-brand); }}
+    .table-wrapper {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
 
-    plotly_cdn = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
-    data_script = (
+    .section {{ margin-bottom: 48px; }}
+    .section:last-child {{ margin-bottom: 0; }}
+    .section-header {{ display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }}
+    .section-title {{ font-size: 1.15rem; font-weight: 600; color: var(--color-heading); }}
+    .subsection-title {{ font-size: 1rem; font-weight: 600; margin-bottom: 16px; color: var(--color-heading); }}
+    .section-badge {{ font-size: 0.72rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }}
+    .section-badge--live {{ background: rgba(85, 197, 0, .15); color: var(--color-brand); }}
+    .section-badge--fixed {{ background: var(--color-btn-bg); color: var(--color-text-muted); border: 1px solid var(--color-border); }}
+
+    details.section {{ margin-bottom: 48px; }}
+    details.section:last-child {{ margin-bottom: 0; }}
+    details.section > summary {{ list-style: none; cursor: pointer; display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }}
+    details.section > summary::-webkit-details-marker {{ display: none; }}
+    details.section > summary::before {{ content: "▾"; font-size: 0.7em; color: var(--color-text-muted); transition: transform .15s ease; }}
+    details.section:not([open]) > summary::before {{ transform: rotate(-90deg); }}
+    details.section:not([open]) > summary {{ margin-bottom: 0; }}
+    .section-body > .card:last-child {{ margin-bottom: 0; }}
+
+    @media (max-width: 768px) {{
+      .container {{ padding: 12px; }}
+      h1 {{ font-size: 1.4rem; }}
+      .meta {{ line-height: 1.7; }}
+      .meta-note {{ display: block; margin-top: 2px; }}
+      .stats {{ gap: 10px; margin-bottom: 20px; }}
+      .stat-card {{ padding: 14px 18px; flex: 1; min-width: 130px; }}
+      .stat-card .value {{ font-size: 1.6rem; }}
+      .card {{ padding: 16px; margin-bottom: 16px; }}
+      h2 {{ font-size: 1.05rem; margin-bottom: 12px; }}
+      table {{ font-size: 0.8rem; }}
+      th, td {{ padding: 8px 6px; }}
+      td.title {{ max-width: 180px; }}
+      .date-filter {{ flex-direction: column; align-items: flex-start; gap: 8px; }}
+      .date-filter input[type="date"] {{ width: 160px; }}
+      .section, details.section {{ margin-bottom: 28px; }}
+      .section-title {{ font-size: 1rem; }}
+    }}
+    @media (max-width: 480px) {{
+      .container {{ padding: 8px; }}
+      h1 {{ font-size: 1.2rem; }}
+      .stat-card .value {{ font-size: 1.3rem; }}
+      .quick-filter-btn, .date-filter button {{ padding: 8px 10px; }}
+    }}
+  </style>"""
+
+
+def _build_data_script(chart_data_json: str) -> str:
+    return (
         f'<script>\n'
         f'const ALL_DATA = {chart_data_json};\n'
         f'const CHART_COLORS = {json.dumps(CHART_COLORS)};\n'
         f'const TOP_N = {TOP_N};\n'
         f'const TITLE_MAX_LEN = {TITLE_MAX_LEN};\n'
         f'const PV_INCREASE_WINDOW_DAYS = {TAG_CHANGE_RATE_WINDOW_DAYS};\n'
+        f'const BRAND_COLOR = {json.dumps(BRAND_COLOR)};\n'
+        f'const BRAND_COLOR_BG = {json.dumps(BRAND_COLOR_BG)};\n'
+        f'const BRAND_COLOR_BG_DARK = {json.dumps(BRAND_COLOR_BG_DARK)};\n'
         f'</script>'
     )
-    filter_script = """<script>
+
+
+def _build_filter_script() -> str:
+    return """<script>
 (function () {
   var rsBtns = [
     {count: 1,  label: "1ヶ月", step: "month", stepmode: "backward"},
@@ -582,12 +663,32 @@ def generate_html(
     {step: "all", label: "全期間"}
   ];
 
+  function isDarkMode() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+
+  function themeLayout() {
+    var dark = isDarkMode();
+    return {
+      template: dark ? "plotly_dark" : "plotly_white",
+      paper_bgcolor: "rgba(0,0,0,0)",
+      plot_bgcolor: "rgba(0,0,0,0)",
+      font: {color: dark ? "#e4e6eb" : "#333333"}
+    };
+  }
+
   function makeXaxis(dates) {
+    var dark = isDarkMode();
     return {
       type: "date",
       range: dates.length ? [dates[0], dates[dates.length - 1]] : undefined,
-      rangeselector: {buttons: rsBtns, bgcolor: "#f0f0f0", activecolor: "#55C500"},
-      rangeslider: {visible: true, thickness: 0.05}
+      rangeselector: {
+        buttons: rsBtns,
+        bgcolor: dark ? BRAND_COLOR_BG_DARK : BRAND_COLOR_BG,
+        activecolor: BRAND_COLOR,
+        font: {color: dark ? "#e4e6eb" : "#333333"}
+      },
+      rangeslider: {visible: true, thickness: 0.05, bgcolor: dark ? BRAND_COLOR_BG_DARK : BRAND_COLOR_BG}
     };
   }
 
@@ -614,19 +715,18 @@ def generate_html(
       y: dates.map(function (d) { return dateMap[d]; }),
       mode: "lines+markers",
       name: "合計PV",
-      line: {color: "#55C500", width: 2},
+      line: {color: BRAND_COLOR, width: 2},
       marker: {size: 6},
       hovertemplate: "%{x}<br>合計PV: %{y:,}<extra></extra>"
     };
     var isMobile = window.innerWidth <= 768;
-    Plotly.react("total-pv-chart", [trace], {
-      title: "全記事の合計PV推移",
-      xaxis: makeXaxis(dates),
-      yaxis: {title: {text: "累計PV数"}},
-      hovermode: "x unified",
-      template: "plotly_white",
-      height: isMobile ? 300 : 450
-    });
+    var layout = themeLayout();
+    layout.title = "全記事の合計PV推移";
+    layout.xaxis = makeXaxis(dates);
+    layout.yaxis = {title: {text: "累計PV数"}};
+    layout.hovermode = "x unified";
+    layout.height = isMobile ? 300 : 450;
+    Plotly.react("total-pv-chart", [trace], layout);
   }
 
   function updatePerArticleChart(data) {
@@ -669,18 +769,17 @@ def generate_html(
     });
 
     var isMobile = window.innerWidth <= 768;
-    Plotly.react("per-article-chart", traces, {
-      title: "上位" + TOP_N + "記事のPV推移",
-      xaxis: makeXaxis(allDates),
-      yaxis: {title: {text: "累計PV数"}},
-      hovermode: "closest",
-      hoverlabel: {namelength: -1},
-      template: "plotly_white",
-      height: isMobile ? 380 : 550,
-      margin: {t: 60, r: isMobile ? 20 : 160},
-      showlegend: !isMobile,
-      legend: {orientation: "v", x: 1.02, y: 1}
-    });
+    var layout = themeLayout();
+    layout.title = "上位" + TOP_N + "記事のPV推移";
+    layout.xaxis = makeXaxis(allDates);
+    layout.yaxis = {title: {text: "累計PV数"}};
+    layout.hovermode = "closest";
+    layout.hoverlabel = {namelength: -1};
+    layout.height = isMobile ? 380 : 550;
+    layout.margin = {t: 60, r: isMobile ? 20 : 160};
+    layout.showlegend = !isMobile;
+    layout.legend = {orientation: "v", x: 1.02, y: 1};
+    Plotly.react("per-article-chart", traces, layout);
   }
 
   function updateStats(data) {
@@ -785,6 +884,42 @@ def generate_html(
     updateRankingTable(data);
   }
 
+  var STATIC_CHART_IDS = ["pv-increase-bar-chart", "pv-increase-trend-chart", "tag-pv-chart", "keyword-pv-chart"];
+  // 日付レンジセレクター（右上ボタン）を持つのは時系列チャートのみ（棒グラフには存在しない）
+  var STATIC_CHART_IDS_WITH_RANGESELECTOR = ["pv-increase-trend-chart", "tag-pv-chart", "keyword-pv-chart"];
+
+  function applyStaticChartTheme() {
+    var dark = isDarkMode();
+    var fontColor = dark ? "#e4e6eb" : "#333333";
+    STATIC_CHART_IDS.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el || typeof Plotly === "undefined") { return; }
+      Plotly.relayout(id, {
+        template: dark ? "plotly_dark" : "plotly_white",
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        "font.color": fontColor
+      });
+    });
+    STATIC_CHART_IDS_WITH_RANGESELECTOR.forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el || typeof Plotly === "undefined") { return; }
+      Plotly.relayout(id, {
+        "xaxis.rangeselector.bgcolor": dark ? BRAND_COLOR_BG_DARK : BRAND_COLOR_BG,
+        "xaxis.rangeselector.font.color": fontColor,
+        "xaxis.rangeslider.bgcolor": dark ? BRAND_COLOR_BG_DARK : BRAND_COLOR_BG
+      });
+    });
+  }
+
+  function applyMobileCollapse() {
+    var isMobile = window.innerWidth <= 768;
+    document.querySelectorAll("details.section--collapsible").forEach(function (d) {
+      if (isMobile) { d.removeAttribute("open"); }
+      else { d.setAttribute("open", ""); }
+    });
+  }
+
   document.getElementById("articleStart").addEventListener("change", function () {
     document.querySelectorAll(".quick-filter-btn").forEach(function (b) { b.classList.remove("active"); });
     applyFilter();
@@ -826,6 +961,21 @@ def generate_html(
   });
 
   applyFilter();
+  applyStaticChartTheme();
+  applyMobileCollapse();
+
+  if (window.matchMedia) {
+    var darkModeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    var handleSchemeChange = function () {
+      applyFilter();
+      applyStaticChartTheme();
+    };
+    if (darkModeQuery.addEventListener) {
+      darkModeQuery.addEventListener("change", handleSchemeChange);
+    } else if (darkModeQuery.addListener) {
+      darkModeQuery.addListener(handleSchemeChange);
+    }
+  }
 
   var resizeTimer;
   window.addEventListener("resize", function () {
@@ -835,6 +985,129 @@ def generate_html(
 }());
 </script>"""
 
+
+def _build_pv_trend_section(total_chart: str, per_article_chart: str) -> str:
+    return f"""
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">PV推移</h2>
+        <span class="section-badge section-badge--live">期間フィルター連動</span>
+      </div>
+      <div class="card">
+        {total_chart}
+      </div>
+      <div class="card">
+        {per_article_chart}
+      </div>
+    </section>
+"""
+
+
+def _build_rising_articles_section(
+    pv_increase_bar_chart: str | None, pv_increase_trend_chart: str | None
+) -> str:
+    if not pv_increase_bar_chart and not pv_increase_trend_chart:
+        return ""
+    cards = ""
+    if pv_increase_bar_chart:
+        cards += f"""
+      <div class="card">
+        {pv_increase_bar_chart}
+      </div>
+"""
+    if pv_increase_trend_chart:
+        cards += f"""
+      <div class="card">
+        {pv_increase_trend_chart}
+      </div>
+"""
+    return f"""
+    <details class="section section--collapsible" open>
+      <summary class="section-title">
+        急上昇記事
+        <span class="section-badge section-badge--fixed">直近{TAG_CHANGE_RATE_WINDOW_DAYS}日固定</span>
+      </summary>
+      <div class="section-body">
+        {cards}
+      </div>
+    </details>
+"""
+
+
+def _build_tag_keyword_section(
+    tag_chart: str | None, tag_table: str | None,
+    keyword_chart: str | None, keyword_table: str | None,
+) -> str:
+    has_tag = bool(tag_chart and tag_table)
+    has_keyword = bool(keyword_chart and keyword_table)
+    if not has_tag and not has_keyword:
+        return ""
+    cards = ""
+    if has_tag:
+        cards += f"""
+      <div class="card">
+        {tag_chart}
+      </div>
+
+      <div class="card">
+        <h3 class="subsection-title">タグ別PV変化率（直近{TAG_CHANGE_RATE_WINDOW_DAYS}日）</h3>
+        <div class="table-wrapper">
+          {tag_table}
+        </div>
+      </div>
+"""
+    if has_keyword:
+        cards += f"""
+      <div class="card">
+        {keyword_chart}
+      </div>
+
+      <div class="card">
+        <h3 class="subsection-title">キーワード別PV変化率（タイトル内・直近{TAG_CHANGE_RATE_WINDOW_DAYS}日）</h3>
+        <div class="table-wrapper">
+          {keyword_table}
+        </div>
+      </div>
+"""
+    return f"""
+    <details class="section section--collapsible" open>
+      <summary class="section-title">
+        タグ・キーワード分析
+        <span class="section-badge section-badge--fixed">直近{TAG_CHANGE_RATE_WINDOW_DAYS}日固定</span>
+      </summary>
+      <div class="section-body">
+        {cards}
+      </div>
+    </details>
+"""
+
+
+def generate_html(
+    ranking_table: str,
+    total_chart: str,
+    per_article_chart: str,
+    latest_date: str,
+    total_pv: int,
+    article_count: int,
+    start_date: str,
+    end_date: str,
+    chart_data_json: str,
+    tag_chart: str | None = None,
+    tag_table: str | None = None,
+    keyword_chart: str | None = None,
+    keyword_table: str | None = None,
+    pv_increase_bar_chart: str | None = None,
+    pv_increase_trend_chart: str | None = None,
+) -> str:
+    pv_trend_section = _build_pv_trend_section(total_chart, per_article_chart)
+    rising_articles_section = _build_rising_articles_section(pv_increase_bar_chart, pv_increase_trend_chart)
+    tag_keyword_section = _build_tag_keyword_section(tag_chart, tag_table, keyword_chart, keyword_table)
+
+    plotly_cdn = '<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>'
+    style_block = _build_style_block()
+    data_script = _build_data_script(chart_data_json)
+    filter_script = _build_filter_script()
+
     return f"""<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -842,63 +1115,7 @@ def generate_html(
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Qiita 記事分析レポート</title>
   {plotly_cdn}
-  <style>
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f5; color: #333; }}
-    .container {{ max-width: 1200px; margin: 0 auto; padding: 24px; }}
-    h1 {{ font-size: 1.8rem; margin-bottom: 4px; color: #55C500; }}
-    .meta {{ color: #777; font-size: 0.9rem; margin-bottom: 24px; }}
-    .meta-note {{ color: #aaa; font-size: 0.8rem; }}
-    .stats {{ display: flex; gap: 16px; margin-bottom: 32px; flex-wrap: wrap; }}
-    .stat-card {{ background: #fff; border-radius: 8px; padding: 20px 28px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-    .stat-card .label {{ font-size: 0.8rem; color: #888; margin-bottom: 4px; }}
-    .stat-card .value {{ font-size: 2rem; font-weight: 700; color: #55C500; }}
-    .card {{ background: #fff; border-radius: 8px; padding: 24px; margin-bottom: 24px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }}
-    h2 {{ font-size: 1.2rem; margin-bottom: 16px; color: #444; }}
-    table {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
-    th {{ background: #f0f0f0; padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #ddd; }}
-    th.sortable {{ cursor: pointer; user-select: none; white-space: nowrap; }}
-    th.sortable:hover {{ background: #e6e6e6; }}
-    th.sortable .sort-arrow {{ display: inline-block; width: 1em; color: #55C500; }}
-    td {{ padding: 10px 12px; border-bottom: 1px solid #eee; vertical-align: top; }}
-    tr:hover td {{ background: #fafafa; }}
-    td.title {{ max-width: 400px; }}
-    td.title a {{ color: #0066cc; text-decoration: none; word-break: break-word; }}
-    td.title a:hover {{ text-decoration: underline; }}
-    td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
-    .date-filter {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
-    .date-filter label {{ display: flex; align-items: center; gap: 6px; font-size: 0.9rem; color: #555; }}
-    .date-filter input[type="date"] {{ padding: 6px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }}
-    .date-filter button {{ padding: 6px 14px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }}
-    .date-filter button:hover {{ background: #e0e0e0; }}
-    .quick-filters {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }}
-    .quick-filter-btn {{ padding: 6px 14px; background: #f0f0f0; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }}
-    .quick-filter-btn:hover {{ background: #e0e0e0; }}
-    .quick-filter-btn.active {{ background: #55C500; color: #fff; border-color: #55C500; }}
-    .table-wrapper {{ overflow-x: auto; -webkit-overflow-scrolling: touch; }}
-    @media (max-width: 768px) {{
-      .container {{ padding: 12px; }}
-      h1 {{ font-size: 1.4rem; }}
-      .meta {{ line-height: 1.7; }}
-      .meta-note {{ display: block; margin-top: 2px; }}
-      .stats {{ gap: 10px; margin-bottom: 20px; }}
-      .stat-card {{ padding: 14px 18px; flex: 1; min-width: 130px; }}
-      .stat-card .value {{ font-size: 1.6rem; }}
-      .card {{ padding: 16px; margin-bottom: 16px; }}
-      h2 {{ font-size: 1.05rem; margin-bottom: 12px; }}
-      table {{ font-size: 0.8rem; }}
-      th, td {{ padding: 8px 6px; }}
-      td.title {{ max-width: 180px; }}
-      .date-filter {{ flex-direction: column; align-items: flex-start; gap: 8px; }}
-      .date-filter input[type="date"] {{ width: 160px; }}
-    }}
-    @media (max-width: 480px) {{
-      .container {{ padding: 8px; }}
-      h1 {{ font-size: 1.2rem; }}
-      .stat-card .value {{ font-size: 1.3rem; }}
-      .quick-filter-btn, .date-filter button {{ padding: 8px 10px; }}
-    }}
-  </style>
+  {style_block}
 </head>
 <body>
   <div class="container">
@@ -939,14 +1156,9 @@ def generate_html(
       </div>
     </div>
 
-    <div class="card">
-      {total_chart}
-    </div>
-
-    <div class="card">
-      {per_article_chart}
-    </div>
-    {extra_sections}
+    {pv_trend_section}
+    {rising_articles_section}
+    {tag_keyword_section}
   </div>
   {data_script}
   {filter_script}

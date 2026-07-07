@@ -308,6 +308,46 @@ class TestGenerateHtml:
         assert 'ALL_DATA' in html
         assert '"id":"art001"' in html or 'id":"art001"' in html
 
+    def test_pv_trend_section_always_present(self):
+        html = self._call()
+        assert "PV推移" in html
+        assert "期間フィルター連動" in html
+
+    def test_rising_articles_section_hidden_when_empty(self):
+        html = self._call()
+        assert "急上昇記事" not in html
+
+    def test_rising_articles_section_shown_when_charts_present(self):
+        from report import TAG_CHANGE_RATE_WINDOW_DAYS
+        html = self._call(pv_increase_bar_chart="<div>bar</div>", pv_increase_trend_chart="<div>trend</div>")
+        assert "急上昇記事" in html
+        assert f"直近{TAG_CHANGE_RATE_WINDOW_DAYS}日固定" in html
+        assert "<div>bar</div>" in html
+        assert "<div>trend</div>" in html
+
+    def test_tag_keyword_section_hidden_when_empty(self):
+        html = self._call()
+        assert "タグ・キーワード分析" not in html
+
+    def test_tag_keyword_section_shown_when_tag_present(self):
+        html = self._call(tag_chart="<div>tagchart</div>", tag_table="<table>tagtable</table>")
+        assert "タグ・キーワード分析" in html
+        assert "<div>tagchart</div>" in html
+        assert "<table>tagtable</table>" in html
+
+    def test_section_order_preserved(self):
+        html = self._call(
+            pv_increase_bar_chart="<div>bar</div>",
+            pv_increase_trend_chart="<div>trend</div>",
+            tag_chart="<div>tagchart</div>",
+            tag_table="<table>tagtable</table>",
+            keyword_chart="<div>kwchart</div>",
+            keyword_table="<table>kwtable</table>",
+        )
+        assert html.index("PVランキング") < html.index("PV推移")
+        assert html.index("PV推移") < html.index("急上昇記事")
+        assert html.index("急上昇記事") < html.index("タグ・キーワード分析")
+
 
 class TestExplodeTags:
     def test_splits_comma_separated_tags_into_rows(self, sample_df_with_tags):
