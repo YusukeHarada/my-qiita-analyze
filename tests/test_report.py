@@ -58,6 +58,12 @@ class TestBuildRankingTable:
         html = build_ranking_table(sample_latest_df, sample_df)
         assert 'href="https://qiita.com/art001"' in html
 
+    def test_rows_carry_article_id_for_detail_selection(self, sample_latest_df, sample_df):
+        from report import build_ranking_table
+        html = build_ranking_table(sample_latest_df, sample_df)
+        for article_id in sample_latest_df["id"]:
+            assert f'<tr data-id="{article_id}"' in html
+
     def test_numbers_formatted_with_comma(self):
         from report import build_ranking_table
         df = pd.DataFrame([{
@@ -347,6 +353,40 @@ class TestGenerateHtml:
         assert html.index("PVランキング") < html.index("PV推移")
         assert html.index("PV推移") < html.index("急上昇記事")
         assert html.index("急上昇記事") < html.index("タグ・キーワード分析")
+
+    def test_article_detail_section_present(self):
+        html = self._call()
+        assert 'id="article-detail"' in html
+        assert "記事別PV推移" in html
+        assert 'id="article-search"' in html
+        assert 'id="article-options"' in html
+        assert 'id="article-detail-chart"' in html
+        assert 'id="article-detail-summary"' in html
+
+    def test_article_detail_controls_present(self):
+        html = self._call()
+        for control in ("metric", "xaxis", "value"):
+            assert f'data-control="{control}"' in html
+        for value in ("page_views", "likes", "stocks", "date", "elapsed", "cumulative", "daily"):
+            assert f'data-value="{value}"' in html
+
+    def test_article_detail_buttons_do_not_reuse_quick_filter_class(self):
+        # .quick-filter-btn には発行日フィルターのクリック処理が付くため、別クラスにしておく必要がある
+        html = self._call()
+        start = html.index('id="article-detail"')
+        end = html.index("</section>", start)
+        assert "quick-filter-btn" not in html[start:end]
+
+    def test_article_detail_compare_limit_embedded(self):
+        from report import ARTICLE_COMPARE_MAX
+        html = self._call()
+        assert f"const ARTICLE_COMPARE_MAX = {ARTICLE_COMPARE_MAX};" in html
+        assert f"最大{ARTICLE_COMPARE_MAX}記事まで比較" in html
+
+    def test_article_detail_section_between_ranking_and_pv_trend(self):
+        html = self._call()
+        assert html.index("PVランキング") < html.index('id="article-detail"')
+        assert html.index('id="article-detail"') < html.index("期間フィルター連動")
 
 
 class TestExplodeTags:

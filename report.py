@@ -13,6 +13,7 @@ import os
 import sqlite3
 import statistics
 from datetime import date, timedelta
+from html import escape as html_escape
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -32,6 +33,8 @@ BRAND_COLOR_BG_DARK = "#2b2f35"
 NEGATIVE_COLOR = "#d62728"
 TITLE_MAX_LEN = 30
 TAG_CHANGE_RATE_WINDOW_DAYS = 7
+ARTICLE_COMPARE_MAX = 5
+ROW_CLICK_HINT = "クリックで記事別PV推移を表示（Shift/Ctrl+クリックで比較に追加）"
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,7 +116,7 @@ def build_ranking_table(
         else:
             increase_display = f"{'+' if pv_increase >= 0 else ''}{pv_increase:,}"
         rows += (
-            f"<tr>"
+            f"<tr data-id=\"{html_escape(str(row['id']))}\" title=\"{ROW_CLICK_HINT}\">"
             f"<td>{rank}</td>"
             f"<td class='title'>{title_link}</td>"
             f"<td>{row['created_at']}</td>"
@@ -609,6 +612,31 @@ def _build_style_block() -> str:
     details.section:not([open]) > summary {{ margin-bottom: 0; }}
     .section-body > .card:last-child {{ margin-bottom: 0; }}
 
+    #ranking-tbody tr[data-id] {{ cursor: pointer; }}
+    #ranking-tbody tr.is-selected td {{ background: rgba(85, 197, 0, .12); }}
+    #ranking-tbody tr.is-selected td:first-child {{ box-shadow: inset 3px 0 0 var(--color-brand); }}
+    .article-picker {{ display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }}
+    .article-picker input {{ flex: 1 1 320px; min-width: 0; padding: 8px 12px; border: 1px solid var(--color-input-border); border-radius: var(--radius-btn); font-size: 0.9rem; background: var(--color-surface); color: var(--color-text); }}
+    .article-picker button, .chip-remove, .seg-btn {{ padding: 6px 14px; background: var(--color-btn-bg); border: 1px solid var(--color-input-border); border-radius: var(--radius-btn); cursor: pointer; font-size: 0.9rem; color: var(--color-text); }}
+    .article-picker button:hover, .seg-btn:hover {{ background: var(--color-btn-bg-hover); }}
+    .article-picker button:disabled {{ opacity: .5; cursor: not-allowed; }}
+    .article-hint {{ font-size: 0.8rem; color: var(--color-text-muted); margin: 8px 0 12px; }}
+    .article-hint.is-warning {{ color: {NEGATIVE_COLOR}; }}
+    .article-chips {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }}
+    .article-chip {{ display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 4px 4px 10px; border: 1px solid var(--color-border); border-radius: 999px; font-size: 0.82rem; background: var(--color-surface); }}
+    .article-chip .chip-label {{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 280px; }}
+    .chip-remove {{ padding: 0 7px; border-radius: 999px; line-height: 1.5; font-size: 0.85rem; }}
+    .swatch {{ display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; }}
+    .article-controls {{ display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }}
+    .seg {{ display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 0.85rem; color: var(--color-text-muted); }}
+    .seg-btn {{ padding: 5px 12px; font-size: 0.85rem; }}
+    .seg-btn.active {{ background: var(--color-brand); color: #fff; border-color: var(--color-brand); }}
+    .seg[hidden] {{ display: none; }}
+    .article-empty {{ padding: 48px 12px; text-align: center; color: var(--color-text-muted); font-size: 0.9rem; }}
+    #article-detail-summary {{ margin-top: 12px; }}
+    #article-detail-summary td.title a {{ color: var(--color-link); }}
+    #article-detail-summary td.title {{ min-width: 200px; }}
+
     @media (max-width: 768px) {{
       .container {{ padding: 12px; }}
       h1 {{ font-size: 1.4rem; }}
@@ -622,6 +650,10 @@ def _build_style_block() -> str:
       table {{ font-size: 0.8rem; }}
       th, td {{ padding: 8px 6px; }}
       td.title {{ max-width: 180px; }}
+      .article-chip .chip-label {{ max-width: 180px; }}
+      .article-controls {{ gap: 10px; }}
+      #article-detail-summary .col-opt {{ display: none; }}
+      #article-detail-summary td.title {{ min-width: 150px; }}
       .date-filter {{ flex-direction: column; align-items: flex-start; gap: 8px; }}
       .date-filter input[type="date"] {{ width: 160px; }}
       .section, details.section {{ margin-bottom: 28px; }}
@@ -647,6 +679,8 @@ def _build_data_script(chart_data_json: str) -> str:
         f'const BRAND_COLOR = {json.dumps(BRAND_COLOR)};\n'
         f'const BRAND_COLOR_BG = {json.dumps(BRAND_COLOR_BG)};\n'
         f'const BRAND_COLOR_BG_DARK = {json.dumps(BRAND_COLOR_BG_DARK)};\n'
+        f'const ARTICLE_COMPARE_MAX = {ARTICLE_COMPARE_MAX};\n'
+        f'const ROW_CLICK_HINT = {json.dumps(ROW_CLICK_HINT, ensure_ascii=False)};\n'
         f'</script>'
     )
 
@@ -864,7 +898,7 @@ def _build_filter_script() -> str:
     });
     updateSortIndicators();
     document.getElementById("ranking-tbody").innerHTML = latest.map(function (r, i) {
-      return "<tr>" +
+      return "<tr data-id='" + String(r.id).replace(/[&<>"']/g, "") + "' title='" + ROW_CLICK_HINT + "'>" +
         "<td>" + (i + 1) + "</td>" +
         "<td class='title'><a href='" + r.url + "' target='_blank'>" + r.title + "</a></td>" +
         "<td>" + r.created_at + "</td>" +
@@ -1003,6 +1037,498 @@ def _build_pv_trend_section(total_chart: str, per_article_chart: str) -> str:
 """
 
 
+def _build_article_detail_section() -> str:
+    return f"""
+    <section class="section" id="article-detail">
+      <div class="section-header">
+        <h2 class="section-title">記事別PV推移</h2>
+        <span class="section-badge section-badge--fixed">最大{ARTICLE_COMPARE_MAX}記事まで比較</span>
+      </div>
+      <div class="card">
+        <div class="article-picker">
+          <input type="search" id="article-search" list="article-options"
+                 placeholder="記事タイトルで検索して追加…" autocomplete="off" aria-label="記事タイトルで検索">
+          <datalist id="article-options"></datalist>
+          <button type="button" id="article-add">追加</button>
+          <button type="button" id="article-clear">クリア</button>
+        </div>
+        <p class="article-hint" id="article-hint">ランキング表の行をクリックしても選べます（Shift/Ctrl+クリックで比較に追加）。</p>
+        <div class="article-chips" id="article-chips"></div>
+        <div class="article-controls">
+          <div class="seg" data-control="metric">指標:
+            <button type="button" class="seg-btn" data-value="page_views">PV</button>
+            <button type="button" class="seg-btn" data-value="likes">いいね</button>
+            <button type="button" class="seg-btn" data-value="stocks">ストック</button>
+          </div>
+          <div class="seg" data-control="xaxis">横軸:
+            <button type="button" class="seg-btn" data-value="date">日付</button>
+            <button type="button" class="seg-btn" data-value="elapsed">投稿からの日数</button>
+          </div>
+          <div class="seg" data-control="value" id="seg-value">表示:
+            <button type="button" class="seg-btn" data-value="cumulative">累計</button>
+            <button type="button" class="seg-btn" data-value="daily">日別増加</button>
+          </div>
+        </div>
+        <div id="article-detail-empty" class="article-empty">記事を選ぶと推移を表示します。</div>
+        <div id="article-detail-chart"></div>
+        <div class="table-wrapper">
+          <table id="article-detail-summary" hidden>
+            <thead>
+              <tr>
+                <th></th>
+                <th>タイトル</th>
+                <th class="col-opt">投稿日</th>
+                <th id="summary-metric-head">累計PV</th>
+                <th>直近7日</th>
+                <th>直近30日</th>
+                <th class="col-opt">いいね</th>
+                <th class="col-opt">ストック</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="article-detail-summary-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+"""
+
+
+def _build_article_detail_script() -> str:
+    return """<script>
+(function () {
+  var METRIC_LABELS = {page_views: "PV", likes: "いいね", stocks: "ストック"};
+  var VALID = {
+    metric: ["page_views", "likes", "stocks"],
+    xaxis: ["date", "elapsed"],
+    value: ["cumulative", "daily"]
+  };
+  var DAY_MS = 86400000;
+  // 投稿日からこの日数以内に最初のスナップショットがある記事は、投稿日を 0 起点とみなす
+  var NEW_ARTICLE_BASELINE_DAYS = 7;
+  var state = {ids: [], metric: "page_views", xaxis: "date", value: "cumulative"};
+  var userTouched = false;
+
+  var chartEl = document.getElementById("article-detail-chart");
+  var emptyEl = document.getElementById("article-detail-empty");
+  var searchEl = document.getElementById("article-search");
+  var hintEl = document.getElementById("article-hint");
+  var defaultHint = hintEl.textContent;
+  if (!chartEl) { return; }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+    });
+  }
+  function truncate(s) {
+    return s.length > TITLE_MAX_LEN ? s.slice(0, TITLE_MAX_LEN) + "…" : s;
+  }
+  function dayDiff(a, b) {
+    return Math.round((Date.parse(b.slice(0, 10)) - Date.parse(a.slice(0, 10))) / DAY_MS);
+  }
+  function addDays(d, n) {
+    return new Date(Date.parse(d) + n * DAY_MS).toISOString().slice(0, 10);
+  }
+  function fmt(n) { return Math.round(n).toLocaleString("ja-JP"); }
+  function fmtSigned(n) {
+    if (n === null || n === undefined) { return "−"; }
+    return (n >= 0 ? "+" : "") + fmt(n);
+  }
+
+  // ---- 記事インデックス ----
+  var articles = {};
+  var globalMinDate = "";
+  ALL_DATA.forEach(function (r) {
+    var a = articles[r.id];
+    if (!a) { a = articles[r.id] = {id: r.id, created_at: r.created_at, rows: []}; }
+    a.rows.push(r);
+    if (!globalMinDate || r.snapshot_date < globalMinDate) { globalMinDate = r.snapshot_date; }
+  });
+  var articleList = Object.keys(articles).map(function (id) {
+    var a = articles[id];
+    a.rows.sort(function (x, y) { return x.snapshot_date < y.snapshot_date ? -1 : 1; });
+    a.latest = a.rows[a.rows.length - 1];
+    a.title = a.latest.title;
+    a.url = a.latest.url;
+    return a;
+  });
+  articleList.sort(function (x, y) { return (y.latest.page_views || 0) - (x.latest.page_views || 0); });
+
+  var labelToId = {};
+  var datalist = document.getElementById("article-options");
+  datalist.innerHTML = articleList.map(function (a) {
+    var label = a.title + "（" + a.created_at + "）";
+    labelToId[label] = a.id;
+    return "<option value=\\"" + escapeHtml(label) + "\\"></option>";
+  }).join("");
+
+  function resolveQuery(q) {
+    q = q.trim();
+    if (!q) { return {}; }
+    if (labelToId[q]) { return {id: labelToId[q]}; }
+    var lower = q.toLowerCase();
+    var hits = articleList.filter(function (a) { return a.title.toLowerCase().indexOf(lower) >= 0; });
+    if (hits.length === 1) { return {id: hits[0].id}; }
+    return {error: hits.length ? hits.length + "件が該当します。候補から1つ選んでください。" : "該当する記事がありません。"};
+  }
+
+  // ---- 系列計算 ----
+  function computeSeries(a, metric) {
+    var s = {dates: [], elapsed: [], cum: [], inc: [], incHover: []};
+    var prev = null;
+    a.rows.forEach(function (r, i) {
+      var v = r[metric] || 0;
+      var d = r.snapshot_date;
+      var inc = null, hover = "";
+      var baseDate = null, baseVal = null;
+      if (prev) {
+        baseDate = prev.snapshot_date; baseVal = prev[metric] || 0;
+      } else if (dayDiff(a.created_at, d) <= NEW_ARTICLE_BASELINE_DAYS) {
+        baseDate = a.created_at; baseVal = 0;
+      }
+      if (baseDate !== null) {
+        var days = Math.max(dayDiff(baseDate, d), 1);
+        var diff = v - baseVal;
+        inc = Math.round(diff / days * 10) / 10;
+        hover = days > 1
+          ? "前回取得から" + days + "日分: " + fmtSigned(diff) + "（1日平均 " + inc.toLocaleString("ja-JP") + "）"
+          : "前日比: " + fmtSigned(diff);
+      }
+      s.dates.push(d);
+      s.elapsed.push(dayDiff(a.created_at, d));
+      s.cum.push(v);
+      s.inc.push(inc);
+      s.incHover.push(hover);
+      prev = r;
+    });
+    return s;
+  }
+
+  // 直近 N 日の増加量（ランキング表の増減PVと同じ考え方）
+  function recentIncrease(a, metric, windowDays) {
+    var latest = a.latest;
+    var target = addDays(latest.snapshot_date, -windowDays);
+    var prior = null;
+    a.rows.forEach(function (r) { if (r.snapshot_date <= target) { prior = r; } });
+    if (prior) { return (latest[metric] || 0) - (prior[metric] || 0); }
+    if (dayDiff(a.created_at, latest.snapshot_date) < windowDays) { return latest[metric] || 0; }
+    return null;
+  }
+
+  // ---- 状態とURL ----
+  function colorOf(id) {
+    var i = state.ids.indexOf(id);
+    return CHART_COLORS[(i < 0 ? 0 : i) % CHART_COLORS.length];
+  }
+
+  function readHash() {
+    var h = location.hash.replace(/^#/, "");
+    if (!h) { return false; }
+    var p = new URLSearchParams(h);
+    var ids = (p.get("article") || "").split(",").filter(function (id) { return articles[id]; });
+    if (!ids.length) { return false; }
+    state.ids = ids.slice(0, ARTICLE_COMPARE_MAX);
+    ["metric", "xaxis", "value"].forEach(function (k) {
+      var v = p.get(k === "xaxis" ? "x" : k);
+      if (VALID[k].indexOf(v) >= 0) { state[k] = v; }
+    });
+    return true;
+  }
+
+  function writeHash() {
+    if (!userTouched || !window.history || !history.replaceState) { return; }
+    var base = location.pathname + location.search;
+    if (!state.ids.length) { history.replaceState(null, "", base); return; }
+    var p = new URLSearchParams();
+    p.set("article", state.ids.join(","));
+    if (state.metric !== "page_views") { p.set("metric", state.metric); }
+    if (state.xaxis !== "date") { p.set("x", state.xaxis); }
+    if (state.value !== "cumulative") { p.set("value", state.value); }
+    history.replaceState(null, "", base + "#" + p.toString().replace(/%2C/g, ","));
+  }
+
+  function setHint(msg, warn) {
+    hintEl.textContent = msg || defaultHint;
+    hintEl.classList.toggle("is-warning", !!warn);
+  }
+
+  function addArticle(id) {
+    if (state.ids.indexOf(id) >= 0) { return true; }
+    if (state.ids.length >= ARTICLE_COMPARE_MAX) {
+      setHint("比較できるのは最大" + ARTICLE_COMPARE_MAX + "記事までです。どれかを外してから追加してください。", true);
+      return false;
+    }
+    state.ids.push(id);
+    return true;
+  }
+
+  // ---- 描画 ----
+  function isDarkMode() {
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+
+  function renderControls() {
+    document.querySelectorAll("#article-detail .seg").forEach(function (seg) {
+      var key = seg.getAttribute("data-control");
+      seg.querySelectorAll(".seg-btn").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-value") === state[key]);
+      });
+    });
+    // 1記事のときは累計と日別増加を同時に表示するので「表示」切替は不要
+    document.getElementById("seg-value").hidden = state.ids.length < 2;
+    document.getElementById("article-add").disabled = state.ids.length >= ARTICLE_COMPARE_MAX;
+    document.getElementById("article-clear").disabled = !state.ids.length;
+  }
+
+  function renderChips() {
+    document.getElementById("article-chips").innerHTML = state.ids.map(function (id) {
+      var a = articles[id];
+      return "<span class=\\"article-chip\\">" +
+        "<span class=\\"swatch\\" style=\\"background:" + colorOf(id) + "\\"></span>" +
+        "<span class=\\"chip-label\\" title=\\"" + escapeHtml(a.title) + "\\">" + escapeHtml(a.title) + "</span>" +
+        "<button type=\\"button\\" class=\\"chip-remove\\" data-id=\\"" + escapeHtml(id) + "\\" aria-label=\\"外す\\">×</button>" +
+        "</span>";
+    }).join("");
+  }
+
+  function renderSummary() {
+    var table = document.getElementById("article-detail-summary");
+    table.hidden = !state.ids.length;
+    var m = state.metric;
+    document.getElementById("summary-metric-head").textContent = "累計" + METRIC_LABELS[m];
+    document.getElementById("article-detail-summary-body").innerHTML = state.ids.map(function (id) {
+      var a = articles[id];
+      var l = a.latest;
+      return "<tr>" +
+        "<td><span class=\\"swatch\\" style=\\"background:" + colorOf(id) + "\\"></span></td>" +
+        "<td class=\\"title\\"><a href=\\"" + escapeHtml(a.url) + "\\" target=\\"_blank\\" rel=\\"noopener\\">" + escapeHtml(a.title) + "</a></td>" +
+        "<td class=\\"col-opt\\">" + escapeHtml(a.created_at) + "</td>" +
+        "<td class=\\"num\\">" + fmt(l[m] || 0) + "</td>" +
+        "<td class=\\"num\\">" + fmtSigned(recentIncrease(a, m, 7)) + "</td>" +
+        "<td class=\\"num\\">" + fmtSigned(recentIncrease(a, m, 30)) + "</td>" +
+        "<td class=\\"num col-opt\\">" + fmt(l.likes || 0) + "</td>" +
+        "<td class=\\"num col-opt\\">" + fmt(l.stocks || 0) + "</td>" +
+        "<td><button type=\\"button\\" class=\\"chip-remove\\" data-id=\\"" + escapeHtml(id) + "\\" aria-label=\\"外す\\">×</button></td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  function highlightRows() {
+    document.querySelectorAll("#ranking-tbody tr[data-id]").forEach(function (tr) {
+      tr.classList.toggle("is-selected", state.ids.indexOf(tr.getAttribute("data-id")) >= 0);
+    });
+  }
+
+  function renderChart() {
+    var sel = state.ids.map(function (id) { return articles[id]; });
+    if (!sel.length || typeof Plotly === "undefined") {
+      if (typeof Plotly !== "undefined") { Plotly.purge(chartEl); }
+      chartEl.style.display = "none";
+      emptyEl.style.display = "";
+      return;
+    }
+    chartEl.style.display = "";
+    emptyEl.style.display = "none";
+
+    var dark = isDarkMode();
+    var fontColor = dark ? "#e4e6eb" : "#333333";
+    var label = METRIC_LABELS[state.metric];
+    var elapsed = state.xaxis === "elapsed";
+    var single = sel.length === 1;
+    var mobile = window.innerWidth <= 768;
+    var xHover = elapsed ? "投稿から%{x}日目" : "%{x}";
+    var traces = [];
+
+    sel.forEach(function (a) {
+      var s = computeSeries(a, state.metric);
+      var x = elapsed ? s.elapsed : s.dates;
+      var color = colorOf(a.id);
+      if (single) {
+        traces.push({
+          type: "bar", x: x, y: s.inc, yaxis: "y2", name: "日別増加（1日あたり）",
+          marker: {color: color, opacity: 0.35}, customdata: s.incHover,
+          hovertemplate: xHover + "<br>%{customdata}<extra></extra>"
+        });
+        traces.push({
+          type: "scatter", mode: "lines+markers", x: x, y: s.cum, name: "累計" + label,
+          line: {color: color, width: 2.5}, marker: {size: 5},
+          hovertemplate: xHover + "<br>累計" + label + ": %{y:,}<extra></extra>"
+        });
+      } else {
+        var daily = state.value === "daily";
+        traces.push({
+          type: "scatter", mode: "lines+markers", x: x, y: daily ? s.inc : s.cum,
+          name: truncate(a.title), line: {color: color, width: 2}, marker: {size: 4},
+          connectgaps: false, customdata: daily ? s.incHover : null,
+          hovertemplate: escapeHtml(truncate(a.title)) + "<br>" + xHover + "<br>" +
+            (daily ? "%{customdata}" : "累計" + label + ": %{y:,}") + "<extra></extra>"
+        });
+      }
+    });
+
+    var xaxis;
+    if (elapsed) {
+      xaxis = {title: {text: mobile ? "" : "投稿からの経過日数"}, rangeslider: {visible: true, thickness: 0.05,
+        bgcolor: dark ? BRAND_COLOR_BG_DARK : BRAND_COLOR_BG}};
+    } else {
+      xaxis = {
+        type: "date",
+        rangeselector: {
+          buttons: [
+            {count: 1, label: "1ヶ月", step: "month", stepmode: "backward"},
+            {count: 3, label: "3ヶ月", step: "month", stepmode: "backward"},
+            {count: 6, label: "6ヶ月", step: "month", stepmode: "backward"},
+            {step: "all", label: "全期間"}
+          ],
+          bgcolor: dark ? BRAND_COLOR_BG_DARK : BRAND_COLOR_BG,
+          activecolor: BRAND_COLOR, font: {color: fontColor}
+        },
+        rangeslider: {visible: true, thickness: 0.05, bgcolor: dark ? BRAND_COLOR_BG_DARK : BRAND_COLOR_BG}
+      };
+    }
+
+    // 投稿日の縦線（日付軸かつデータ収集期間内に投稿された記事のみ）
+    var shapes = [], annotations = [];
+    if (!elapsed) {
+      sel.forEach(function (a) {
+        if (a.created_at < globalMinDate) { return; }
+        shapes.push({type: "line", xref: "x", yref: "paper", x0: a.created_at, x1: a.created_at, y0: 0, y1: 1,
+          line: {color: colorOf(a.id), width: 1.5, dash: "dot"}});
+        annotations.push({xref: "x", yref: "paper", x: a.created_at, y: 1, yanchor: "bottom", showarrow: false,
+          text: "投稿", font: {size: 11, color: colorOf(a.id)}});
+      });
+    }
+
+    var yTitle = single || state.value === "cumulative" ? "累計" + label : "日別増加（1日あたり）";
+    var layout = {
+      title: {text: single ? escapeHtml(truncate(sel[0].title)) : "記事別" + label + "推移（比較）", font: {size: 15}},
+      template: dark ? "plotly_dark" : "plotly_white",
+      paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)",
+      font: {color: fontColor},
+      xaxis: xaxis,
+      yaxis: {title: {text: mobile ? "" : yTitle}, rangemode: "tozero"},
+      hovermode: single ? "x unified" : "closest",
+      height: mobile ? 420 : 480,
+      margin: {t: 70, r: single ? 60 : 20, l: mobile ? 40 : 70, b: 40},
+      legend: {orientation: "h", x: 0, y: elapsed && !mobile ? -0.36 : -0.28, yanchor: "top"},
+      shapes: shapes, annotations: annotations,
+      bargap: 0.1
+    };
+    if (single) {
+      layout.yaxis2 = {title: {text: mobile ? "" : "日別増加"}, overlaying: "y", side: "right",
+        showgrid: false, rangemode: "tozero"};
+    }
+    Plotly.react(chartEl, traces, layout, {responsive: true, displaylogo: false});
+  }
+
+  function render() {
+    setHint(null);
+    renderAll();
+  }
+  function renderAll() {
+    renderControls();
+    renderChips();
+    renderSummary();
+    highlightRows();
+    renderChart();
+    writeHash();
+  }
+
+  // ---- イベント ----
+  function submitSearch() {
+    var r = resolveQuery(searchEl.value);
+    if (r.error) { setHint(r.error, true); return; }
+    if (!r.id) { return; }
+    userTouched = true;
+    setHint(null);
+    if (addArticle(r.id)) { searchEl.value = ""; }
+    renderAll();
+  }
+  document.getElementById("article-add").addEventListener("click", submitSearch);
+  searchEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") { e.preventDefault(); submitSearch(); }
+  });
+  // 候補リストから選んだ時点で追加する
+  searchEl.addEventListener("input", function () {
+    if (labelToId[searchEl.value]) { submitSearch(); }
+  });
+  document.getElementById("article-clear").addEventListener("click", function () {
+    userTouched = true;
+    state.ids = [];
+    render();
+  });
+  document.getElementById("article-detail").addEventListener("click", function (e) {
+    var rm = e.target.closest(".chip-remove");
+    if (rm) {
+      userTouched = true;
+      state.ids = state.ids.filter(function (id) { return id !== rm.getAttribute("data-id"); });
+      render();
+      return;
+    }
+    var seg = e.target.closest(".seg-btn");
+    if (seg) {
+      userTouched = true;
+      state[seg.parentNode.getAttribute("data-control")] = seg.getAttribute("data-value");
+      render();
+    }
+  });
+
+  var tbody = document.getElementById("ranking-tbody");
+  if (tbody) {
+    tbody.addEventListener("click", function (e) {
+      if (e.target.closest("a")) { return; }
+      var tr = e.target.closest("tr[data-id]");
+      if (!tr || !articles[tr.getAttribute("data-id")]) { return; }
+      var id = tr.getAttribute("data-id");
+      userTouched = true;
+      setHint(null);
+      if (e.shiftKey || e.ctrlKey || e.metaKey) {
+        if (state.ids.indexOf(id) >= 0) {
+          state.ids = state.ids.filter(function (x) { return x !== id; });
+        } else {
+          addArticle(id);
+        }
+      } else {
+        state.ids = [id];
+      }
+      renderAll();
+      var rect = document.getElementById("article-detail").getBoundingClientRect();
+      if (rect.top < 0 || rect.top > window.innerHeight * 0.6) {
+        document.getElementById("article-detail").scrollIntoView({behavior: "smooth", block: "start"});
+      }
+    });
+    // ランキング表はソートや発行日フィルターで再描画されるので、そのたびに選択行を付け直す
+    if (window.MutationObserver) {
+      new MutationObserver(highlightRows).observe(tbody, {childList: true});
+    }
+  }
+
+  window.addEventListener("hashchange", function () {
+    if (readHash()) { userTouched = true; render(); }
+  });
+  if (window.matchMedia) {
+    var mq = window.matchMedia("(prefers-color-scheme: dark)");
+    if (mq.addEventListener) { mq.addEventListener("change", renderChart); }
+    else if (mq.addListener) { mq.addListener(renderChart); }
+  }
+  var resizeTimer;
+  window.addEventListener("resize", function () {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderChart, 200);
+  });
+
+  // ---- 初期表示 ----
+  if (readHash()) {
+    userTouched = true;
+  } else if (articleList.length) {
+    state.ids = [articleList[0].id];  // 未指定時は累計PVトップの記事を表示
+  }
+  render();
+}());
+</script>"""
+
+
 def _build_rising_articles_section(
     pv_increase_bar_chart: str | None, pv_increase_trend_chart: str | None
 ) -> str:
@@ -1107,6 +1633,8 @@ def generate_html(
     style_block = _build_style_block()
     data_script = _build_data_script(chart_data_json)
     filter_script = _build_filter_script()
+    article_detail_section = _build_article_detail_section()
+    article_detail_script = _build_article_detail_script()
 
     return f"""<!DOCTYPE html>
 <html lang="ja">
@@ -1156,12 +1684,14 @@ def generate_html(
       </div>
     </div>
 
+    {article_detail_section}
     {pv_trend_section}
     {rising_articles_section}
     {tag_keyword_section}
   </div>
   {data_script}
   {filter_script}
+  {article_detail_script}
 </body>
 </html>"""
 
